@@ -1,0 +1,5 @@
+.cache/
+build/
+*.mp4
+screenshots/
+snapshots/

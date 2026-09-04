@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+TEST_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+status=0
+
+while IFS= read -r -d '' test_file; do
+    case "$test_file" in
+        *_test.sh)
+            bash "$test_file" || status=1
+            ;;
+        *_test.py)
+            python3 "$test_file" || status=1
+            ;;
+    esac
+done < <(find "$TEST_DIR" -type f \( -name '*_test.sh' -o -name '*_test.py' \) -print0 | sort -z)
+
+exit "$status"
