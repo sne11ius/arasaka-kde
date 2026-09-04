@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+FETCH_COMPONENTS_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+# shellcheck source=lib/common.sh
+source "$FETCH_COMPONENTS_DIR/../lib/common.sh"
+
+fetch_component() {
+    local requested_name=${1:-}
+    local manifest=${ARASAKA_COMPONENT_MANIFEST:-"$(project_root)/manifest/components.tsv"}
+    local entry_name entry_version entry_url entry_sha256 entry_filename
+    local version='' url='' sha256='' filename=''
+    local download_dir target temporary
+
+    [[ -n "$requested_name" ]] || die "component name is required"
+    [[ -f "$manifest" ]] || die "component manifest not found: $manifest"
+
+    while IFS=$'\t' read -r entry_name entry_version entry_url entry_sha256 entry_filename; do
+        [[ "$entry_name" == 'name' ]] && continue
+        if [[ "$entry_name" == "$requested_name" ]]; then
+            version=$entry_version
+            url=$entry_url
+            sha256=$entry_sha256
+            filename=$entry_filename
+            break
+        fi
+    done <"$manifest"
+
+    [[ -n "$version" ]] || die "component not found in manifest: $requested_name"
+    [[ "$sha256" =~ ^[0-9a-f]{64}$ ]] || die "invalid SHA-256 for component: $requested_name"
+    [[ "$filename" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || die "unsafe filename for component $requested_name: $filename"
+
+    case "$url" in
+        https://*) ;;
+        file://*)
+            [[ "${ARASAKA_TEST_ALLOW_FILE:-0}" == '1' ]] || die "only HTTPS URLs are allowed: $url"
+            ;;
+        *)
+            die "only HTTPS URLs are allowed: $url"
+            ;;
+    esac
+
+    download_dir="$(cache_root)/downloads"
+    mkdir -p -- "$download_dir"
+    target="$download_dir/$filename"
+
+    if [[ -f "$target" ]] && printf '%s  %s\n' "$sha256" "$target" | sha256sum --check --status; then
+        log "Using verified cached component: $requested_name $version"
+        printf '%s\n' "$target"
+        return 0
+    fi
+
+    temporary=$(mktemp -- "$download_dir/.${filename}.download.XXXXXX")
+    if [[ "$url" == https://* ]]; then
+        if ! curl --fail --location --proto '=https' --silent --show-error --output "$temporary" "$url"; then
+            rm -f -- "$temporary"
+            die "failed to fetch component: $requested_name"
+        fi
+    elif ! curl --fail --location --proto '=file' --silent --show-error --output "$temporary" "$url"; then
+        rm -f -- "$temporary"
+        die "failed to fetch component: $requested_name"
+    fi
+
+    if ! printf '%s  %s\n' "$sha256" "$temporary" | sha256sum --check --status; then
+        rm -f -- "$temporary"
+        die "SHA-256 verification failed for component: $requested_name"
+    fi
+
+    if ! atomic_copy "$temporary" "$target"; then
+        rm -f -- "$temporary"
+        die "failed to cache component: $requested_name"
+    fi
+    rm -f -- "$temporary"
+
+    log "Fetched and verified component: $requested_name $version"
+    printf '%s\n' "$target"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    [[ $# -eq 1 ]] || die "usage: $0 COMPONENT"
+    fetch_component "$1"
+fi
