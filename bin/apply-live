@@ -149,11 +149,8 @@ kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key BorderSize Normal
 kwriteconfig6 --file kwinrc --group Desktops --key Number 1 --notify
 kwriteconfig6 --file kwinrc --group Desktops --key Rows 1 --notify
 kwriteconfig6 --file kwinrc --group Plugins --key poloniumEnabled --type bool true --notify
-kwriteconfig6 --file kwinrc --group Plugins --key magiclampEnabled --type bool true --notify
 kwriteconfig6 --file kwinrc --group Plugins --key overviewEnabled --type bool true --notify
-kwriteconfig6 --file kwinrc --group Plugins --key scaleEnabled --type bool true --notify
 kwriteconfig6 --file kwinrc --group Plugins --key wobblywindowsEnabled --type bool false --notify
-kwriteconfig6 --file kwinrc --group Effect-MagicLamp --key AnimationDuration 220 --notify
 kwriteconfig6 --file kwinrc --group Windows --key BorderSnapZone 8 --notify
 kwriteconfig6 --file kwinrc --group Windows --key WindowSnapZone 8 --notify
 kwriteconfig6 --file kwinrc --group Script-polonium --key DefaultEngine 2 --notify
@@ -249,7 +246,7 @@ qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$tile_padding_
 qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.start
 qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript arasaka-tile-padding >/dev/null
 rm -f "$tile_padding_script"
-qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect magiclamp >/dev/null || true
+"$repo_root/bin/apply-window-effects"
 "$HOME/.local/libexec/arasaka-kde/reconcile-displays"
 systemctl --user enable --now arasaka-display-reconcile.path
 path_disabled=false

@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/common.sh
+source "$script_dir/../lib/common.sh"
+
+[[ $# -eq 0 ]] || die "usage: $0 (run inside the target Plasma session)"
+for tool in qdbus6 kwriteconfig6 tar jq diff; do
+    require_command "$tool"
+done
+qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.isEffectLoaded kwin6_effect_tv_glitch >/dev/null
+
+repo_root=$(project_root)
+data_home=${XDG_DATA_HOME:-$HOME/.local/share}
+config_home=${XDG_CONFIG_HOME:-$HOME/.config}
+effects_dir="$data_home/kwin/effects"
+upstream=kwin6_effect_tv_glitch
+minimize=arasaka_tv_glitch_minimize
+duration=700
+
+archive=$("$script_dir/fetch-components" tv-glitch)
+stage=$(mktemp -d)
+trap 'rm -rf -- "$stage"' EXIT
+mkdir "$stage/$upstream"
+# Only extract the immutable, SHA-256-verified release package, not a home-directory copy.
+tar --extract --gzip --file "$archive" --directory "$stage/$upstream" \
+    --no-same-owner --no-same-permissions
+jq -e --arg id "$upstream" '.KPackageStructure == "KWin/Effect" and .KPlugin.Id == $id' \
+    "$stage/$upstream/metadata.json" >/dev/null
+for file in contents/code/main.js contents/config/main.xml contents/ui/config.ui \
+    contents/shaders/tv-glitch.frag contents/shaders/tv-glitch_core.frag; do
+    [[ -f "$stage/$upstream/$file" ]] || die "TV Glitch package is missing $file"
+done
+cp -a "$stage/$upstream" "$stage/$minimize"
+cp -a "$repo_root/theme/kwin/effects/$minimize/." "$stage/$minimize/"
+for id in "$upstream" "$minimize"; do
+    install -m644 "$repo_root/LICENSES/GPL-3.0-or-later.txt" "$stage/$id/LICENSE"
+    [[ ! -L "$effects_dir/$id" ]] || die "refusing to replace symlink: $effects_dir/$id"
+    [[ ! -e "$effects_dir/$id" || -d "$effects_dir/$id" ]] || die "not a directory: $effects_dir/$id"
+done
+
+install -d "$effects_dir" "$config_home" "$(state_root)/backups"
+backup=$(mktemp -d "$(state_root)/backups/window-effects-$(date +%Y%m%d-%H%M%S).XXXXXX")
+log "Window-effect backup: $backup"
+[[ ! -f "$config_home/kwinrc" ]] || cp -a "$config_home/kwinrc" "$backup/kwinrc"
+for id in "$upstream" "$minimize"; do
+    if [[ -d "$effects_dir/$id" ]] && diff -qr "$stage/$id" "$effects_dir/$id" >/dev/null; then
+        continue
+    fi
+    [[ ! -d "$effects_dir/$id" ]] || mv "$effects_dir/$id" "$backup/$id"
+    mv "$stage/$id" "$effects_dir/$id"
+done
+
+for id in scale magiclamp squash; do
+    kwriteconfig6 --file kwinrc --group Plugins --key "${id}Enabled" --type bool false
+done
+for id in "$upstream" "$minimize"; do
+    kwriteconfig6 --file kwinrc --group Plugins --key "${id}Enabled" --type bool true
+    kwriteconfig6 --file kwinrc --group "Effect-$id" --key Duration "$duration"
+done
+qdbus6 org.kde.KWin /KWin org.kde.KWin.reconfigure
+for id in scale magiclamp squash "$upstream" "$minimize"; do
+    qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.unloadEffect "$id"
+done
+for id in "$upstream" "$minimize"; do
+    [[ $(qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect "$id") == true ]] \
+        || die "failed to load $id; backup: $backup; select Scale/Magic Lamp in System Settings > Animations"
+    [[ $(qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.isEffectLoaded "$id") == true ]] \
+        || die "$id is not loaded; backup: $backup"
+done
+log "TV Glitch enabled for open/close and minimize/restore at ${duration} ms."
