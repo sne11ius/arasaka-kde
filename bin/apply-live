@@ -1,0 +1,284 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+data_home=${XDG_DATA_HOME:-$HOME/.local/share}
+config_home=${XDG_CONFIG_HOME:-$HOME/.config}
+
+install_upstream_visuals() {
+  local daemon_archive daemon_root lockscreen_archive lockscreen_root stage
+  local system_shell="$1" overlay_shell="$2" item base
+
+  daemon_archive=$("$repo_root/bin/fetch-components" daemon-kde-mk2)
+  lockscreen_archive=$("$repo_root/bin/fetch-components" silent-klockscreen)
+  stage=$(mktemp -d)
+
+  tar --extract --gzip --file "$daemon_archive" --directory "$stage" --no-same-owner --no-same-permissions
+  tar --extract --gzip --file "$lockscreen_archive" --directory "$stage" --no-same-owner --no-same-permissions
+  daemon_root="$stage/daemon-kde-mk2-01bf4df4666e9021ac8013bc2c4eaabc8d312d68"
+  lockscreen_root="$stage/Silent-KLockscreen-50c1e0cda5d283abbbe7eea18f0a7693b71e12e7"
+
+  [[ -f "$daemon_root/Icon Theme/Daemon-Icons/index.theme" ]]
+  [[ -f "$daemon_root/Plasma Style/Daemon-2.0/metadata.json" ]]
+  [[ -f "$lockscreen_root/LockScreenUi.qml" ]]
+
+  install -d "$data_home/icons/Daemon-Icons" "$data_home/plasma/desktoptheme/Daemon-2.0"
+  cp -a "$daemon_root/Icon Theme/Daemon-Icons/." "$data_home/icons/Daemon-Icons/"
+  cp -a "$daemon_root/Plasma Style/Daemon-2.0/." "$data_home/plasma/desktoptheme/Daemon-2.0/"
+
+  if [[ -e $overlay_shell && ! -f $overlay_shell/.arasaka-managed ]]; then
+    mv "$overlay_shell" "$overlay_shell.before-arasaka-$(date +%Y%m%d-%H%M%S)"
+  else
+    rm -rf "$overlay_shell"
+  fi
+  install -d "$overlay_shell/contents/lockscreen"
+  install -m644 "$system_shell/metadata.json" "$overlay_shell/metadata.json"
+  for item in "$system_shell/contents/"*; do
+    base=${item##*/}
+    [[ $base == lockscreen ]] || ln -s "$item" "$overlay_shell/contents/$base"
+  done
+  for item in LockOsd.qml LockScreen.qml LockScreenUi.qml MainBlock.qml MediaControls.qml \
+    NoPasswordUnlock.qml PasswordSync.qml SilentFonts.qml config.qml config.xml qmldir components fonts icons LICENSE; do
+    cp -a "$lockscreen_root/$item" "$overlay_shell/contents/lockscreen/"
+  done
+  patch --silent --directory "$overlay_shell/contents/lockscreen" --strip 1 \
+    <"$repo_root/theme/lockscreen/silent-plasma-6.7.patch"
+  : >"$overlay_shell/.arasaka-managed"
+  rm -rf "$stage"
+}
+
+backup_changed_file() {
+  local source=$1
+  local managed_source=$2
+  local backup
+
+  [[ -f $source ]] || return 0
+  cmp -s "$source" "$managed_source" && return 0
+  backup="$source.before-arasaka-$(date +%Y%m%d-%H%M%S)"
+  cp -a "$source" "$backup"
+}
+
+install -Dm644 "$repo_root/theme/color-schemes/Arasaka.colors" "$data_home/color-schemes/Arasaka.colors"
+install -Dm644 "$repo_root/theme/konsole/Arasaka.colorscheme" "$data_home/konsole/Arasaka.colorscheme"
+install -Dm644 "$repo_root/assets/branding/arasaka-launcher.svg" "$data_home/icons/arasaka-launcher.svg"
+install -Dm644 "$repo_root/theme/icons/Arasaka/index.theme" "$data_home/icons/Arasaka/index.theme"
+install -Dm644 "$repo_root/assets/branding/arasaka-launcher.svg" "$data_home/icons/Arasaka/scalable/apps/start-here-kde.svg"
+install -Dm644 "$repo_root/theme/cursors/Arasaka-Cursor/index.theme" "$data_home/icons/Arasaka-Cursor/index.theme"
+install -Dm644 "$repo_root/theme/cursors/Arasaka-Cursor/cursors/.keep" "$data_home/icons/Arasaka-Cursor/cursors/.keep"
+cp -a /usr/share/icons/breeze_cursors/cursors/. "$data_home/icons/Arasaka-Cursor/cursors/"
+install -Dm644 "$repo_root/theme/cursors/Arasaka-Cursor/index.theme" "$HOME/.icons/Arasaka-Cursor/index.theme"
+install -d "$HOME/.icons/Arasaka-Cursor/cursors"
+cp -a /usr/share/icons/breeze_cursors/cursors/. "$HOME/.icons/Arasaka-Cursor/cursors/"
+install -Dm644 "$repo_root/theme/zsh/arasaka-p10k.zsh" "$data_home/arasaka-kde/arasaka-p10k.zsh"
+backup_changed_file "$data_home/applications/microsoft-edge.desktop" "$repo_root/theme/browser/microsoft-edge.desktop"
+install -Dm644 "$repo_root/theme/browser/microsoft-edge.desktop" "$data_home/applications/microsoft-edge.desktop"
+install -Dm644 "$repo_root/assets/wallpapers/mikoshi-16x9.svg" "$data_home/wallpapers/Arasaka/mikoshi-16x9.svg"
+install -Dm644 "$repo_root/assets/wallpapers/mikoshi-16x10.svg" "$data_home/wallpapers/Arasaka/mikoshi-16x10.svg"
+install -Dm644 "$repo_root/theme/plasma/desktoptheme/com.arasaka.mikoshi/metadata.json" "$data_home/plasma/desktoptheme/com.arasaka.mikoshi/metadata.json"
+install -Dm644 "$repo_root/theme/plasma/desktoptheme/com.arasaka.mikoshi/colors" "$data_home/plasma/desktoptheme/com.arasaka.mikoshi/colors"
+install -Dm644 "$repo_root/theme/plasma/desktoptheme/com.arasaka.mikoshi/plasmarc" "$data_home/plasma/desktoptheme/com.arasaka.mikoshi/plasmarc"
+install -Dm644 "$repo_root/systemd/arasaka-display-reconcile.service" "$config_home/systemd/user/arasaka-display-reconcile.service"
+install -Dm644 "$repo_root/systemd/arasaka-display-reconcile.path" "$config_home/systemd/user/arasaka-display-reconcile.path"
+install -Dm755 "$repo_root/bin/reconcile-displays" "$HOME/.local/libexec/arasaka-kde/reconcile-displays"
+install -Dm644 "$repo_root/lib/arasaka_topology.py" "$HOME/.local/libexec/arasaka-kde/arasaka_topology.py"
+install -Dm644 "$repo_root/plasma/layout.js" "$HOME/.local/libexec/arasaka-kde/layout.js"
+install -Dm644 "$repo_root/theme/panel-colorizer/Arasaka.json" "$HOME/.local/libexec/arasaka-kde/Arasaka.json"
+install -Dm644 "$repo_root/environment.d/arasaka.conf" "$config_home/environment.d/arasaka.conf"
+install -Dm644 "$repo_root/theme/plasma/look-and-feel/com.arasaka.mikoshi/metadata.json" "$data_home/plasma/look-and-feel/com.arasaka.mikoshi/metadata.json"
+install -Dm644 "$repo_root/theme/plasma/look-and-feel/com.arasaka.mikoshi/contents/splash/Splash.qml" "$data_home/plasma/look-and-feel/com.arasaka.mikoshi/contents/splash/Splash.qml"
+install -Dm644 "$repo_root/assets/wallpapers/mikoshi-16x9.svg" "$data_home/plasma/look-and-feel/com.arasaka.mikoshi/contents/splash/images/mikoshi.svg"
+install -Dm644 "$repo_root/assets/branding/arasaka-launcher.svg" "$data_home/plasma/look-and-feel/com.arasaka.mikoshi/contents/splash/images/arasaka.svg"
+install_upstream_visuals "/usr/share/plasma/shells/org.kde.plasma.desktop" "$data_home/plasma/shells/org.kde.plasma.desktop"
+
+for gtk_version in gtk-3.0 gtk-4.0; do
+  install -Dm644 "$repo_root/theme/gtk/gtk.css" "$config_home/$gtk_version/arasaka.css"
+  gtk_css="$config_home/$gtk_version/gtk.css"
+  if [[ -f $gtk_css ]] && ! grep -Fq '@import url("arasaka.css");' "$gtk_css"; then
+    cp -n "$gtk_css" "$gtk_css.before-arasaka"
+    temporary=$(mktemp)
+    printf '%s\n\n' '@import url("arasaka.css");' >"$temporary"
+    command cat "$gtk_css" >>"$temporary"
+    install -m644 "$temporary" "$gtk_css"
+    rm -f "$temporary"
+  elif [[ ! -f $gtk_css ]]; then
+    printf '%s\n' '@import url("arasaka.css");' >"$gtk_css"
+  fi
+done
+
+if [[ -f $HOME/.zshrc ]] && ! grep -Fq '/arasaka-kde/arasaka-p10k.zsh' "$HOME/.zshrc"; then
+  cp -n "$HOME/.zshrc" "$HOME/.zshrc.before-arasaka"
+  printf '\n%s\n' '[[ ! -f "$HOME/.local/share/arasaka-kde/arasaka-p10k.zsh" ]] || source "$HOME/.local/share/arasaka-kde/arasaka-p10k.zsh"' >>"$HOME/.zshrc"
+fi
+
+rsvg-convert -w 1920 -h 1080 "$repo_root/assets/wallpapers/mikoshi-16x9.svg" -o "$data_home/wallpapers/Arasaka/mikoshi-16x9.png"
+rsvg-convert -w 1600 -h 1000 "$repo_root/assets/wallpapers/mikoshi-16x10.svg" -o "$data_home/wallpapers/Arasaka/mikoshi-16x10.png"
+
+ffmpeg -hide_banner -loglevel error -y -loop 1 -i "$data_home/wallpapers/Arasaka/mikoshi-16x9.png" -t 12 -r 24 \
+  -vf "zoompan=z='1.004+0.004*sin(2*PI*on/288)':d=1:s=1920x1080:fps=24,drawbox=x=0:y='(ih-3)*(0.5+0.5*sin(2*PI*t/12))':w=iw:h=3:color=0xe60012@0.34:t=fill,format=yuv420p" \
+  -c:v libx264 -preset medium -crf 21 -movflags +faststart "$data_home/wallpapers/Arasaka/mikoshi-16x9.mp4"
+ffmpeg -hide_banner -loglevel error -y -loop 1 -i "$data_home/wallpapers/Arasaka/mikoshi-16x10.png" -t 12 -r 24 \
+  -vf "zoompan=z='1.004+0.004*sin(2*PI*on/288)':d=1:s=1600x1000:fps=24,drawbox=x=0:y='(ih-3)*(0.5+0.5*sin(2*PI*t/12))':w=iw:h=3:color=0xe60012@0.34:t=fill,format=yuv420p" \
+  -c:v libx264 -preset medium -crf 21 -movflags +faststart "$data_home/wallpapers/Arasaka/mikoshi-16x10.mp4"
+
+plasma-apply-colorscheme Arasaka
+plasma-apply-desktoptheme com.arasaka.mikoshi
+plasma-apply-cursortheme --size 24 Arasaka-Cursor || plasma-apply-cursortheme --size 24 breeze_cursors
+kbuildsycoca6 --noincremental >/dev/null
+kvantummanager --set KvFlatRed
+
+font='Inter,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1'
+small_font='Inter,9,-1,5,400,0,0,0,0,0,0,0,0,0,0,1'
+fixed_font='JetBrains Mono,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1'
+title_font='Rajdhani SemiBold,11,-1,5,600,0,0,0,0,0,0,0,0,0,0,1'
+kwriteconfig6 --file kdeglobals --group KDE --key widgetStyle kvantum --notify
+kwriteconfig6 --file kdeglobals --group Icons --key Theme Arasaka --notify
+kwriteconfig6 --file ksplashrc --group KSplash --key Theme com.arasaka.mikoshi --notify
+kwriteconfig6 --file kdeglobals --group General --key font "$font" --notify
+kwriteconfig6 --file kdeglobals --group General --key menuFont "$font" --notify
+kwriteconfig6 --file kdeglobals --group General --key toolBarFont "$font" --notify
+kwriteconfig6 --file kdeglobals --group General --key smallestReadableFont "$small_font" --notify
+kwriteconfig6 --file kdeglobals --group General --key fixed "$fixed_font" --notify
+kwriteconfig6 --file kdeglobals --group WM --key activeFont "$title_font" --notify
+kwriteconfig6 --file kdeglobals --group WM --key frame '115,123,134' --notify
+kwriteconfig6 --file kdeglobals --group WM --key inactiveFrame '115,123,134' --notify
+
+kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key library org.kde.klassy --notify
+kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key theme Klassy --notify
+kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key BorderSize Normal --notify
+kwriteconfig6 --file kwinrc --group Desktops --key Number 1 --notify
+kwriteconfig6 --file kwinrc --group Desktops --key Rows 1 --notify
+kwriteconfig6 --file kwinrc --group Plugins --key poloniumEnabled --type bool true --notify
+kwriteconfig6 --file kwinrc --group Plugins --key magiclampEnabled --type bool true --notify
+kwriteconfig6 --file kwinrc --group Plugins --key overviewEnabled --type bool true --notify
+kwriteconfig6 --file kwinrc --group Plugins --key scaleEnabled --type bool true --notify
+kwriteconfig6 --file kwinrc --group Plugins --key wobblywindowsEnabled --type bool false --notify
+kwriteconfig6 --file kwinrc --group Effect-MagicLamp --key AnimationDuration 220 --notify
+kwriteconfig6 --file kwinrc --group Windows --key BorderSnapZone 8 --notify
+kwriteconfig6 --file kwinrc --group Windows --key WindowSnapZone 8 --notify
+kwriteconfig6 --file kwinrc --group Script-polonium --key DefaultEngine 2 --notify
+kwriteconfig6 --file kwinrc --group Script-polonium --key ThreeColumnSide1Size 0.22 --notify
+kwriteconfig6 --file kwinrc --group Script-polonium --key ThreeColumnSide2Size 0.22 --notify
+kwriteconfig6 --file kwinrc --group Script-polonium --key Borders 4 --notify
+kwriteconfig6 --file kwinrc --group Script-polonium --key IgnoreWindowClasses 'krunner, yakuake, kded, polkit, plasmashell, xwaylandvideobridge' --notify
+
+window_rules=$(kreadconfig6 --file kwinrulesrc --group General --key rules)
+if [[ ,$window_rules, != *,arasaka-frame,* ]]; then
+  window_rules=${window_rules:+$window_rules,}arasaka-frame
+fi
+kwriteconfig6 --file kwinrulesrc --group General --key rules "$window_rules" --notify
+kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key Description 'Arasaka uniform program frames' --notify
+kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key types 1 --notify
+kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key wmclass '.*' --notify
+kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key wmclassmatch 3 --notify
+kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key noborder --type bool false --notify
+kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key noborderrule 2 --notify
+
+kwriteconfig6 --file klassy/klassyrc --group Windeco --key ButtonIconStyle 2 --notify
+kwriteconfig6 --file klassy/klassyrc --group Windeco --key ButtonShape 5 --notify
+kwriteconfig6 --file klassy/klassyrc --group Windeco --key WindowCornerRadius 2 --notify
+kwriteconfig6 --file klassy/klassyrc --group Windeco --key DrawTitleBarSeparator --type bool true --notify
+kwriteconfig6 --file klassy/klassyrc --group Windeco --key UseTitleBarColorForAllBorders --type bool false --notify
+kwriteconfig6 --file klassy/klassyrc --group Windeco --key ColorizeWindowOutlineWithButton --type bool false --notify
+kwriteconfig6 --file klassy/klassyrc --group TitleBarOpacity --key ActiveTitleBarOpacity 92 --notify
+kwriteconfig6 --file klassy/klassyrc --group TitleBarOpacity --key InactiveTitleBarOpacity 82 --notify
+kwriteconfig6 --file klassy/klassyrc --group TitleBarOpacity --key BlurTransparentTitleBars --type bool true --notify
+kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineStyleActive WindowOutlineCustomColor --notify
+kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineStyleInactive WindowOutlineCustomColor --notify
+kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineCustomColorActive '154,162,173' --notify
+kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineCustomColorInactive '154,162,173' --notify
+kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineCustomColorOpacityActive 100 --notify
+kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineCustomColorOpacityInactive 100 --notify
+kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineThickness 1 --notify
+kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key Enabled --type bool true --notify
+kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key ExceptionWindowPropertyPattern '.*' --notify
+kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key ExceptionWindowPropertyType 0 --notify
+kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key HideTitleBar Always --notify
+kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key ExceptionBorder --type bool true --notify
+kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key BorderSize None --notify
+kwriteconfig6 --file klassy/klassyrc --group Style --key FrameCornerRadius 1 --notify
+kwriteconfig6 --file klassy/klassyrc --group Style --key FrameCustomCornerRadius 2 --notify
+kwriteconfig6 --file klassy/klassyrc --group Style --key MenuOpacity 88 --notify
+
+kwriteconfig6 --file kscreenlockerrc --group Greeter --group Wallpaper --group org.kde.image --group General --key Image "$data_home/wallpapers/Arasaka/mikoshi-16x9.png" --notify
+kwriteconfig6 --file kscreenlockerrc --group Greeter --group Wallpaper --group org.kde.image --group General --key PreviewImage "$data_home/wallpapers/Arasaka/mikoshi-16x9.png" --notify
+kwriteconfig6 --file konsolerc --group TabBar --key TabBarPosition Bottom --notify
+kwriteconfig6 --file "$data_home/konsole/Quake.profile" --group Appearance --key ColorScheme Arasaka --notify
+kwriteconfig6 --file "$data_home/konsole/Quake.profile" --group Appearance --key Font "$fixed_font" --notify
+
+while IFS= read -r profile; do
+  [[ -d "$profile" ]] || continue
+  user_chrome="$profile/chrome/userChrome.css"
+  arasaka_chrome="$profile/chrome/arasaka.css"
+  install -Dm644 "$repo_root/theme/firefox/userChrome.css" "$arasaka_chrome"
+  if [[ ! -f $user_chrome ]] || cmp -s "$user_chrome" "$repo_root/theme/firefox/userChrome.css"; then
+    printf '%s\n' '@import url("arasaka.css");' >"$user_chrome"
+  elif ! grep -Fq '@import url("arasaka.css");' "$user_chrome"; then
+    backup_changed_file "$user_chrome" "$repo_root/theme/firefox/userChrome.css"
+    temporary=$(mktemp)
+    printf '%s\n\n' '@import url("arasaka.css");' >"$temporary"
+    command cat "$user_chrome" >>"$temporary"
+    install -m644 "$temporary" "$user_chrome"
+    rm -f "$temporary"
+  fi
+  if [[ ! -f "$profile/user.js" ]] || ! grep -q 'toolkit.legacyUserProfileCustomizations.stylesheets' "$profile/user.js"; then
+    [[ ! -f "$profile/user.js" ]] || cp -a "$profile/user.js" "$profile/user.js.before-arasaka-$(date +%Y%m%d-%H%M%S)"
+    printf '%s\n' 'user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);' >> "$profile/user.js"
+  fi
+done < <(awk -F= '/^Path=/{print ENVIRON["HOME"] "/.mozilla/firefox/" $2}' "$HOME/.mozilla/firefox/profiles.ini" 2>/dev/null || true)
+
+path_disabled=false
+reenable_path() {
+  if $path_disabled; then
+    systemctl --user enable --now arasaka-display-reconcile.path >/dev/null 2>&1 || true
+  fi
+}
+trap reenable_path EXIT
+systemctl --user disable --now arasaka-display-reconcile.path >/dev/null 2>&1 || true
+path_disabled=true
+systemctl --user daemon-reload
+dbus-send --session --type=signal /KlassyDecoration org.kde.Klassy.Style.updateDecorationColorCache
+qdbus6 org.kde.KWin /KWin org.kde.KWin.reconfigure
+tile_padding_script=$(mktemp)
+printf '%s\n' \
+  'workspace.screens.forEach(screen => {' \
+  '    workspace.tilingForScreen(screen).rootTile.padding = 6;' \
+  '});' > "$tile_padding_script"
+qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript arasaka-tile-padding >/dev/null 2>&1 || true
+qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$tile_padding_script" arasaka-tile-padding >/dev/null
+qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.start
+qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript arasaka-tile-padding >/dev/null
+rm -f "$tile_padding_script"
+qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect magiclamp >/dev/null || true
+"$HOME/.local/libexec/arasaka-kde/reconcile-displays"
+systemctl --user enable --now arasaka-display-reconcile.path
+path_disabled=false
+trap - EXIT
+
+if [[ -f "$HOME/.local/lib/x86_64-linux-gnu/plugins/kwin/effects/plugins/better_blur_dx.so" ]]; then
+  # KWin discovers this user plugin path at login; keep the loaded native effect alive until then.
+  kwriteconfig6 --file kwinrc --group Plugins --key better_blur_dxEnabled --type bool true
+  kwriteconfig6 --file kwinrc --group Plugins --key blurEnabled --type bool false
+  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key BlurStrength 13
+  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key NoiseStrength 7
+  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key Brightness 86
+  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key Saturation 118
+  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key Contrast 112
+  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key ForceContrastParams --type bool true
+  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key CornerRadius 2
+  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key BlurNonMatching --type bool true
+  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key BlurDecorations --type bool true
+  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key BlurMenus --type bool true
+  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key BlurDocks --type bool true
+  qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect better_blur_dx >/dev/null || true
+  if [[ $(qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.isEffectLoaded better_blur_dx) == true ]]; then
+    qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.unloadEffect blur >/dev/null || true
+  else
+    kwriteconfig6 --file kwinrc --group Plugins --key better_blur_dxEnabled --type bool false
+    kwriteconfig6 --file kwinrc --group Plugins --key blurEnabled --type bool true
+    qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect blur >/dev/null || true
+  fi
+else
+  kwriteconfig6 --file kwinrc --group Plugins --key better_blur_dxEnabled --type bool false
+  kwriteconfig6 --file kwinrc --group Plugins --key blurEnabled --type bool true
+  qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect blur >/dev/null || true
+fi

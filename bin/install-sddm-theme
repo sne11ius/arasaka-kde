@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+theme_source=$repo_root/theme/sddm/com.arasaka.mikoshi
+wallpaper=$repo_root/assets/wallpapers/mikoshi-16x9.svg
+logo=$repo_root/assets/branding/arasaka-launcher.svg
+
+printf '%s\n' \
+  "sudo install -d -m755 /usr/share/sddm/themes/com.arasaka.mikoshi" \
+  "sudo cp -a '$theme_source/.' /usr/share/sddm/themes/com.arasaka.mikoshi/" \
+  "sudo install -m644 '$wallpaper' /usr/share/sddm/themes/com.arasaka.mikoshi/mikoshi.svg" \
+  "sudo install -m644 '$logo' /usr/share/sddm/themes/com.arasaka.mikoshi/arasaka.svg" \
+  "sudo cp -an /etc/sddm.conf.d/kde_settings.conf /etc/sddm.conf.d/kde_settings.conf.before-arasaka" \
+  "sudo kwriteconfig6 --file /etc/sddm.conf.d/kde_settings.conf --group Theme --key Current com.arasaka.mikoshi"

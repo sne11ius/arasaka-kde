@@ -1,0 +1,12 @@
+[SddmGreeterTheme]
+Name=Arasaka Mikoshi
+Description=Arasaka Mikoshi login screen
+Author=Arasaka KDE
+License=GPL-3.0
+Type=sddm-theme
+Version=1.0
+MainScript=Main.qml
+ConfigFile=theme.conf
+Theme-Id=com.arasaka.mikoshi
+Theme-API=2.0
+QtVersion=6

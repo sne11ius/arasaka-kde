@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="3840" height="2160" viewBox="0 0 3840 2160">
+  <defs>
+    <linearGradient id="redGlow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff3344" stop-opacity="0.92"/>
+      <stop offset="0.48" stop-color="#e60012" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#07090c" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="grid" width="80" height="80" patternUnits="userSpaceOnUse">
+      <path d="M80 0H0V80" fill="none" stroke="#737b86" stroke-width="1" opacity="0.12"/>
+    </pattern>
+    <pattern id="scan" width="8" height="8" patternUnits="userSpaceOnUse">
+      <path d="M0 1H8" stroke="#e8e9ea" stroke-width="1" opacity="0.03"/>
+    </pattern>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="22" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="3840" height="2160" fill="#07090c"/>
+  <rect width="3840" height="2160" fill="url(#grid)"/>
+  <path d="M0 0H1420L810 2160H0Z" fill="#11151a"/>
+  <path d="M3840 0H3150L3530 2160H3840Z" fill="#11151a"/>
+  <path d="M1120 0L1740 0 1120 2160 480 2160Z" fill="#e60012" opacity="0.08"/>
+  <path d="M2730 0L3150 0 3380 2160 2950 2160Z" fill="url(#redGlow)" opacity="0.18"/>
+  <g transform="translate(1920 960)" filter="url(#glow)">
+    <circle r="350" fill="none" stroke="#e60012" stroke-width="3" opacity="0.45"/>
+    <circle r="285" fill="#07090c" stroke="#e8e9ea" stroke-width="2" opacity="0.96"/>
+    <g fill="#e8e9ea" stroke="#e60012" stroke-width="10">
+      <path d="M0-226C-58-214-122-147-116-80-111-25-61 11 0 0 61 11 111-25 116-80 122-147 58-214 0-226Z"/>
+      <path d="M196 113C214 57 188-31 127-60 77-84 21-56 0 0-40 47-34 108 10 143 62 185 158 169 196 113Z"/>
+      <path d="M-196 113C-214 57-188-31-127-60-77-84-21-56 0 0 40 47 34 108-10 143-62 185-158 169-196 113Z"/>
+    </g>
+    <circle r="33" fill="#e60012"/>
+  </g>
+  <g font-family="Rajdhani, sans-serif" fill="#e8e9ea">
+    <text x="1920" y="1425" font-size="126" font-weight="700" text-anchor="middle" letter-spacing="32">ARASAKA</text>
+    <text x="1920" y="1515" font-size="34" text-anchor="middle" letter-spacing="17" fill="#e60012">荒坂 // MIKOSHI SECURE ACCESS</text>
+    <text x="135" y="180" font-size="32" letter-spacing="8">COUNTERINTELLIGENCE DIVISION</text>
+    <text x="135" y="230" font-size="20" letter-spacing="5" fill="#737b86">NIGHT CITY // RELIC NETWORK // 2077</text>
+    <text x="3690" y="182" font-size="28" text-anchor="end" letter-spacing="7" fill="#e60012">SYSTEM: ONLINE</text>
+    <text x="3690" y="225" font-size="18" text-anchor="end" letter-spacing="4" fill="#737b86">NODE 07 // CLEARANCE S</text>
+  </g>
+  <g stroke="#e60012" fill="none">
+    <path d="M135 1940H1210L1280 2010H3705" stroke-width="3"/>
+    <path d="M135 1980H1120" stroke-width="12"/>
+    <path d="M3570 330v510l-42 42v410" stroke-width="2" opacity="0.7"/>
+  </g>
+  <g fill="#737b86" font-family="JetBrains Mono, monospace" font-size="17">
+    <text x="135" y="2055">SECURE CHANNEL 00:E6:12 // ENCRYPTION ACTIVE</text>
+    <text x="3705" y="2055" text-anchor="end">CORPORATE PROPERTY // UNAUTHORIZED ACCESS TERMINATED</text>
+  </g>
+  <rect width="3840" height="2160" fill="url(#scan)"/>
+</svg>

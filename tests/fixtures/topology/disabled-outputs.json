@@ -1,0 +1,22 @@
+{
+  "outputs": [
+    {
+      "name": "eDP-1",
+      "connected": true,
+      "enabled": true,
+      "priority": 1
+    },
+    {
+      "name": "DP-1",
+      "connected": true,
+      "enabled": false,
+      "priority": 0
+    },
+    {
+      "name": "HDMI-A-1",
+      "connected": false,
+      "enabled": false,
+      "priority": 0
+    }
+  ]
+}

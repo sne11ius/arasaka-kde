@@ -1,0 +1,11 @@
+{
+  "KPackageStructure": "Plasma/LookAndFeel",
+  "KPlugin": {
+    "Id": "com.arasaka.mikoshi",
+    "Name": "Arasaka Mikoshi",
+    "Description": "Arasaka Mikoshi splash screen",
+    "Version": "1.0",
+    "License": "GPL-3.0",
+    "Authors": [{"Name": "Arasaka KDE"}]
+  }
+}

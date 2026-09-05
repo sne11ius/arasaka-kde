@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch KDE display topology for Arasaka panel reconciliation
+
+[Path]
+PathChanged=%h/.config/kwinoutputconfig.json
+Unit=arasaka-display-reconcile.service
+
+[Install]
+WantedBy=default.target

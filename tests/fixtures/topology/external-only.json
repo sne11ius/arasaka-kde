@@ -1,0 +1,10 @@
+{
+  "outputs": [
+    {
+      "name": "HDMI-A-1",
+      "connected": true,
+      "enabled": true,
+      "priority": 1
+    }
+  ]
+}

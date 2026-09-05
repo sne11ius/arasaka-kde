@@ -1,0 +1,54 @@
+@define-color theme_bg_color #07090c;
+@define-color theme_fg_color #e8e9ea;
+@define-color theme_base_color #11151a;
+@define-color theme_selected_bg_color #e60012;
+@define-color theme_selected_fg_color #ffffff;
+@define-color accent_color #e60012;
+@define-color accent_bg_color #e60012;
+@define-color accent_fg_color #ffffff;
+
+window,
+dialog,
+popover,
+menu {
+  background-color: #07090c;
+  color: #e8e9ea;
+}
+
+headerbar,
+.titlebar {
+  background: #07090c;
+  color: #e8e9ea;
+  border-bottom: 1px solid #e60012;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+button,
+entry,
+spinbutton,
+dropdown {
+  background: #11151a;
+  color: #e8e9ea;
+  border: 1px solid #191d23;
+  border-radius: 2px;
+}
+
+button:hover,
+button:checked,
+row:selected,
+selection {
+  background: #e60012;
+  color: #ffffff;
+}
+
+scrollbar slider {
+  background: #737b86;
+  border-radius: 0;
+  min-width: 5px;
+  min-height: 5px;
+}
+
+scrollbar slider:hover {
+  background: #e60012;
+}

@@ -1,0 +1,13 @@
+--- a/LockScreenUi.qml
++++ b/LockScreenUi.qml
+@@ -203 +203 @@
+-            clock: silentClock
++            clock: clock
+@@ -210,2 +210,2 @@
+-            anchors.fill: silentClock
+-            source: silentClock
++            anchors.fill: clock
++            source: clock
+@@ -228 +228 @@
+-            id: silentClock
++            id: clock

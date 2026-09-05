@@ -1,0 +1,48 @@
+{
+  "panel": {
+    "normal": {
+      "enabled": true,
+      "blurBehind": true,
+      "backgroundColor": {"enabled": true, "custom": "#07090c", "alpha": 0.92, "sourceType": 0},
+      "foregroundColor": {"enabled": true, "custom": "#e8e9ea", "alpha": 1, "sourceType": 0},
+      "radius": {"enabled": true, "corner": {"topLeft": 0, "topRight": 0, "bottomRight": 0, "bottomLeft": 0}},
+      "border": {
+        "enabled": true,
+        "customSides": true,
+        "custom": {
+          "widths": {"left": 0, "bottom": 2, "right": 0, "top": 0},
+          "radius": {"enabled": false, "corner": {"topLeft": 0, "topRight": 0, "bottomRight": 0, "bottomLeft": 0}}
+        },
+        "width": 1,
+        "color": {"enabled": true, "custom": "#e60012", "alpha": 0.9, "sourceType": 0}
+      },
+      "floatingApplets": true
+    }
+  },
+  "widgets": {
+    "normal": {
+      "enabled": true,
+      "blurBehind": true,
+      "backgroundColor": {"enabled": true, "custom": "#11151a", "alpha": 0.94, "sourceType": 0},
+      "foregroundColor": {"enabled": true, "custom": "#e8e9ea", "alpha": 1, "sourceType": 0},
+      "radius": {"enabled": true, "corner": {"topLeft": 0, "topRight": 0, "bottomRight": 0, "bottomLeft": 0}},
+      "margin": {"enabled": true, "side": {"right": 3, "left": 3, "top": 4, "bottom": 4}},
+      "spacing": 6,
+      "border": {
+        "enabled": true,
+        "customSides": true,
+        "custom": {
+          "widths": {"left": 2, "bottom": 1, "right": 0, "top": 0},
+          "radius": {"enabled": false, "corner": {"topLeft": 0, "topRight": 0, "bottomRight": 0, "bottomLeft": 0}}
+        },
+        "width": 1,
+        "color": {"enabled": true, "custom": "#e60012", "alpha": 0.9, "sourceType": 0}
+      }
+    }
+  },
+  "stockPanelSettings": {
+    "opacity": {"enabled": true, "value": "translucent"},
+    "floating": {"enabled": false, "value": false}
+  },
+  "nativePanel": {"background": {"enabled": true, "opacity": 0, "shadow": false}, "floatingDialogs": true, "floatingDialogsAllowOverride": true}
+}

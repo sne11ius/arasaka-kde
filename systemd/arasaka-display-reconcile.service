@@ -1,0 +1,9 @@
+[Unit]
+Description=Reconcile Arasaka Plasma display roles
+After=plasma-plasmashell.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/libexec/arasaka-kde/reconcile-displays
+Restart=on-failure
+RestartSec=2

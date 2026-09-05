@@ -1,0 +1,22 @@
+[Desktop Entry]
+Version=1.0
+Name=Microsoft Edge
+GenericName=Web Browser
+Comment=Access the Internet
+Exec=/usr/bin/microsoft-edge-stable --ozone-platform-hint=auto --force-dark-mode --enable-features=WebUIDarkMode,WaylandWindowDecorations %U
+StartupNotify=true
+StartupWMClass=microsoft-edge
+Terminal=false
+Icon=microsoft-edge
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=application/pdf;text/html;text/xml;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/microsoft-edge;
+Actions=new-window;new-private-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=/usr/bin/microsoft-edge-stable --ozone-platform-hint=auto --force-dark-mode --enable-features=WebUIDarkMode,WaylandWindowDecorations
+
+[Desktop Action new-private-window]
+Name=New InPrivate Window
+Exec=/usr/bin/microsoft-edge-stable --ozone-platform-hint=auto --force-dark-mode --enable-features=WebUIDarkMode,WaylandWindowDecorations --inprivate

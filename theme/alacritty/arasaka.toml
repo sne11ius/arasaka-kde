@@ -1,0 +1,47 @@
+[colors.primary]
+background = "#07090c"
+foreground = "#e8e9ea"
+dim_foreground = "#737b86"
+
+[colors.cursor]
+cursor = "#e60012"
+text = "#ffffff"
+
+[colors.selection]
+background = "#e60012"
+text = "#ffffff"
+
+[colors.normal]
+black = "#07090c"
+red = "#e60012"
+green = "#bec2c6"
+yellow = "#a0a4aa"
+blue = "#737b86"
+magenta = "#b8000f"
+cyan = "#a0a4aa"
+white = "#e8e9ea"
+
+[colors.bright]
+black = "#737b86"
+red = "#ff3344"
+green = "#e8e9ea"
+yellow = "#e8e9ea"
+blue = "#bec2c6"
+magenta = "#ff3344"
+cyan = "#e8e9ea"
+white = "#ffffff"
+
+[window]
+opacity = 0.88
+blur = true
+
+[font]
+size = 11.0
+
+[font.normal]
+family = "JetBrains Mono"
+style = "Regular"
+
+[font.bold]
+family = "JetBrains Mono"
+style = "Bold"

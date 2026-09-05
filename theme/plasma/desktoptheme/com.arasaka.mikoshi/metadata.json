@@ -1,0 +1,11 @@
+{
+  "KPlugin": {
+    "Authors": [{"Name": "Arasaka KDE"}],
+    "Description": "Mikoshi command interface",
+    "Id": "com.arasaka.mikoshi",
+    "License": "CC0-1.0",
+    "Name": "Arasaka Mikoshi",
+    "Version": "1.0"
+  },
+  "X-Plasma-API": "5.0"
+}

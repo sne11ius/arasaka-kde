@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+if [[ -f $script_dir/arasaka_topology.py ]]; then
+  engine=$script_dir/arasaka_topology.py
+  layout=$script_dir/layout.js
+  colorizer_settings=$script_dir/Arasaka.json
+else
+  repo_root=$(cd -- "$script_dir/.." && pwd)
+  engine=$repo_root/lib/arasaka_topology.py
+  layout=$repo_root/plasma/layout.js
+  colorizer_settings=$repo_root/theme/panel-colorizer/Arasaka.json
+fi
+state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/arasaka-kde
+state_file=$state_dir/topology
+force=false
+dry_run=false
+json_file=
+while (($#)); do
+  case $1 in
+    --force)
+      force=true
+      ;;
+    --dry-run)
+      dry_run=true
+      ;;
+    --json)
+      [[ $# -ge 2 ]] || { printf 'error: --json requires a file\n' >&2; exit 2; }
+      json_file=$2
+      shift
+      ;;
+    *)
+      printf 'error: unknown argument: %s\n' "$1" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+mkdir -p "$state_dir"
+exec 9>"$state_dir/reconcile.lock"
+flock -n 9 || exit 0
+
+if [[ -n $json_file ]]; then
+  output_json=$(<"$json_file")
+else
+  output_json=$(kscreen-doctor --json 2>/dev/null)
+fi
+
+if $dry_run; then
+  python3 "$engine" <<<"$output_json"
+  exit 0
+fi
+
+[[ -z $json_file ]] || { printf 'error: --json requires --dry-run\n' >&2; exit 2; }
+
+plan_json=$(python3 "$engine" <<<"$output_json")
+if [[ $(jq -r '.status // "ready"' <<<"$plan_json") == no-enabled-outputs ]]; then
+  exit 0
+fi
+
+primary=$(jq -r '.primary' <<<"$plan_json")
+internal=$(jq -r '.internal // ""' <<<"$plan_json")
+signature=$(jq -r '.signature' <<<"$plan_json")
+layout_version=$(sha256sum "$layout" "$colorizer_settings" | sha256sum | cut -d' ' -f1)
+signature="$signature|$layout_version"
+
+topology_changed=true
+if [[ -f $state_file ]] && [[ $(<"$state_file") == "$signature" ]]; then
+  topology_changed=false
+fi
+
+while IFS=$'\t' read -r connector priority; do
+  [[ -n $connector ]] || continue
+  kscreen-doctor "output.${connector}.priority.${priority}" >/dev/null
+done < <(jq -r '.changes[] | @tsv' <<<"$plan_json")
+
+if ! $force && ! $topology_changed; then
+  exit 0
+fi
+
+for _ in {1..20}; do
+  if qdbus6 org.kde.plasmashell /PlasmaShell org.freedesktop.DBus.Peer.Ping >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.5
+done
+qdbus6 org.kde.plasmashell /PlasmaShell org.freedesktop.DBus.Peer.Ping >/dev/null
+
+colorizer=$(jq -c . "$colorizer_settings")
+script=$(<"$layout")
+script=${script//__PRIMARY_CONNECTOR__/$primary}
+script=${script//__INTERNAL_CONNECTOR__/$internal}
+script=${script//__HOME__/$HOME}
+script=${script/__COLORIZER_SETTINGS__/$colorizer}
+
+qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$script"
+printf '%s\n' "$signature" > "$state_file"
