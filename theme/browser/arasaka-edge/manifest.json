@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Arasaka Mikoshi",
+  "version": "1.0",
+  "theme": {
+    "colors": {
+      "frame": [48, 0, 5],
+      "frame_inactive": [17, 21, 26],
+      "toolbar": [17, 21, 26],
+      "tab_text": [232, 233, 234],
+      "tab_background_text": [154, 162, 173],
+      "bookmark_text": [232, 233, 234],
+      "toolbar_button_icon": [232, 233, 234],
+      "toolbar_text": [232, 233, 234],
+      "omnibox_background": [7, 9, 12],
+      "omnibox_text": [232, 233, 234],
+      "ntp_background": [7, 9, 12],
+      "ntp_text": [232, 233, 234],
+      "ntp_link": [255, 51, 68],
+      "button_background": [230, 0, 18]
+    }
+  }
+}

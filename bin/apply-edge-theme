@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+data_home=${XDG_DATA_HOME:-$HOME/.local/share}
+config_home=${XDG_CONFIG_HOME:-$HOME/.config}
+theme_dir="$data_home/arasaka-kde/edge-theme"
+theme_crx="$data_home/arasaka-kde/edge-theme.crx"
+theme_key="$data_home/arasaka-kde/edge-theme.pem"
+
+install -Dm644 "$repo_root/theme/browser/microsoft-edge.desktop" "$data_home/applications/microsoft-edge.desktop"
+install -Dm644 "$repo_root/theme/browser/arasaka-edge/manifest.json" "$theme_dir/manifest.json"
+rm -f "$theme_crx"
+
+pack_args=(--pack-extension="$theme_dir")
+if [[ -f $theme_key ]]; then
+  pack_args+=(--pack-extension-key="$theme_key")
+fi
+microsoft-edge-stable "${pack_args[@]}"
+chmod 600 "$theme_key"
+
+extension_id=$(openssl rsa -in "$theme_key" -pubout -outform DER 2>/dev/null \
+  | sha256sum | cut -c1-32 | tr '0123456789abcdef' 'abcdefghijklmnop')
+install -d "$config_home/microsoft-edge/External Extensions"
+printf '{\n  "external_crx": "%s",\n  "external_version": "1.0"\n}\n' "$theme_crx" \
+  >"$config_home/microsoft-edge/External Extensions/$extension_id.json"
+
+printf 'Installed Arasaka Mikoshi Edge theme (%s). Restart Edge to apply it.\n' "$extension_id"

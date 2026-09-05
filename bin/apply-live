@@ -72,6 +72,7 @@ cp -a /usr/share/icons/breeze_cursors/cursors/. "$HOME/.icons/Arasaka-Cursor/cur
 install -Dm644 "$repo_root/theme/zsh/arasaka-p10k.zsh" "$data_home/arasaka-kde/arasaka-p10k.zsh"
 backup_changed_file "$data_home/applications/microsoft-edge.desktop" "$repo_root/theme/browser/microsoft-edge.desktop"
 install -Dm644 "$repo_root/theme/browser/microsoft-edge.desktop" "$data_home/applications/microsoft-edge.desktop"
+"$repo_root/bin/apply-edge-theme"
 install -Dm644 "$repo_root/assets/wallpapers/mikoshi-16x9.svg" "$data_home/wallpapers/Arasaka/mikoshi-16x9.svg"
 install -Dm644 "$repo_root/assets/wallpapers/mikoshi-16x10.svg" "$data_home/wallpapers/Arasaka/mikoshi-16x10.svg"
 install -Dm644 "$repo_root/theme/plasma/desktoptheme/com.arasaka.mikoshi/metadata.json" "$data_home/plasma/desktoptheme/com.arasaka.mikoshi/metadata.json"
