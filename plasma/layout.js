@@ -76,19 +76,6 @@ function createCommandStrip(screen) {
     addMonitor(panel, "org.kde.plasma.systemmonitor.net", "NET", "org.kde.ksysguard.textonly");
     panel.addWidget("org.kde.plasma.marginsseparator");
     panel.addWidget("org.kde.plasma.systemtray");
-    var clock = panel.addWidget("org.kde.plasma.digitalclock");
-    config(clock, "Appearance", {
-        autoFontAndSize: false,
-        boldText: true,
-        fontFamily: "Rajdhani SemiBold",
-        fontSize: 10,
-        fontWeight: 600,
-        showSeconds: 2,
-        use24hFormat: 2,
-        dateDisplayFormat: 1,
-        dateFormat: "custom",
-        customDateFormat: "yyyy-MM-dd"
-    });
     addColorizer(panel);
 }
 
