@@ -182,7 +182,7 @@ selects TV Glitch again. Its shared applied duration is set in
 The wallpaper uses **Heartfelt without the heart sequence**, over the existing
 Arasaka/Mikoshi artwork, through
 [kde-shader-wallpaper](https://github.com/y4my4my4m/kde-shader-wallpaper).
-All existing desktops use 30 FPS, full resolution, normal shader speed, and
+All existing desktops use 30 FPS, full resolution, 75% shader playback speed, and
 pause for maximized/fullscreen windows on their respective screen. Mouse and
 audio capture, window-reactive shader input, playlists, and buffer passes are
 disabled. Only texture channel 0 is enabled.
@@ -230,7 +230,9 @@ the original author/license header. The packaged upstream shader is untouched.
 Background fog uses cubic B-spline filtering across adjacent mip levels, with a
 one-level bias toward finer detail. This reduces blur modestly and avoids the
 visible mip-grid corners produced by the original single linear sample as fog
-increases. Rain, trails, refraction, and lighting retain their original timing.
+increases. Rain, trails, and refraction retain their original timing. Lightning
+skips alternate burst windows without changing the remaining flashes' duration
+or intensity: roughly one burst every 34 seconds of active playback at 75% speed.
 Generated PNGs and the complete upstream shader are not committed to this repo.
 The shader and artwork are configured with escaped, absolute `file://` URLs.
 
@@ -296,8 +298,9 @@ that source did not exist before installation. Preserve unrelated artwork and
 runtime files. Full deployment and display reconciliation own persistent layout
 policy separately from this scoped installer.
 
-The opt-in GPU check can isolate the blur's edge response and capture light/heavy
-fog at fixed animation times, including a simulated hour of playback:
+The opt-in GPU check can isolate the blur's edge response, verify that alternate
+lightning bursts are absent and retained flashes are unchanged, and capture
+light/heavy fog at fixed animation times, including a simulated hour of playback:
 
 ```sh
 python3 tests/shader_smoke.py --blur-check \

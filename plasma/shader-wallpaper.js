@@ -26,7 +26,7 @@ targets.forEach(function (desktop) {
         selectedShaderPath: fileUrl(dataHome + "/wallpapers/Arasaka/shaders/Heartfelt_No_Heart.frag"),
         selectedShaderCode: "",
         running: true,
-        shaderSpeed: 1,
+        shaderSpeed: 0.75,
         targetFps: 30,
         resolutionScale: 1,
         pauseMode: 0,

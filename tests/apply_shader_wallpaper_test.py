@@ -252,7 +252,7 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         desktops = json.loads(Path(self.env["DESKTOP_STATE"]).read_text())
         expected = {
             "selectedShaderPath": (self.artwork / "shaders" / SHADER).as_uri(),
-            "selectedShaderCode": "", "running": True, "shaderSpeed": 1,
+            "selectedShaderCode": "", "running": True, "shaderSpeed": 0.75,
             "targetFps": 30, "resolutionScale": 1, "pauseMode": 0, "checkActiveScreen": True,
             "mouseEnabled": False, "audioEnabled": False, "windowsEnabled": False,
             "iChannel0Enabled": True, "imageChannel0": 0, "playlistEnabled": False,

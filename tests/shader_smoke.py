@@ -16,7 +16,7 @@ def main():
     parser.add_argument("--shader", type=Path, required=True)
     parser.add_argument("--texture", type=Path, required=True)
     parser.add_argument("--screenshot", type=Path, required=True)
-    parser.add_argument("--blur-check", action="store_true", help="test Heartfelt's blur and fixed animation times")
+    parser.add_argument("--blur-check", action="store_true", help="test Heartfelt's blur, lightning and fixed animation times")
     args = parser.parse_args()
     native = args.package.resolve() / "contents/ui/shaderwallpaper"
     for path in (native / "libshaderwallpaperplugin.so", args.shader, args.texture):
@@ -44,10 +44,18 @@ def main():
             sample = re.search(r"^\s*vec3 col = (.+);", source, re.MULTILINE)
             if not sample:
                 parser.error("cannot locate Heartfelt's background sampling expression")
+            lightning = re.search(r"float lightning =.*?(?=\n\s*col \*=)", source, re.DOTALL)
+            if not lightning:
+                parser.error("cannot locate Heartfelt's lightning calculation")
             # Use the actual sampling expression without rain/lighting obscuring the edge response.
             code = "#define mainImage rainImage\n#define iTime (iMouse.x)\n" + source
             code += "\n#undef mainImage\n#undef iTime\nvoid mainImage(out vec4 color, in vec2 p) {\n"
             code += "if (iMouse.y > 0.) { rainImage(color, p); return; }\n"
+            # Red is actual lightning, green the original, blue identifies retained cycles.
+            code += "if (iMouse.y < 0.) { float t = p.x / iResolution.x * 50.2654824574;\n"
+            code += lightning[0] + "\n"
+            code += "float original = sin(t*sin(t*10.))*pow(max(0.,sin(t+sin(t))),10.);\n"
+            code += "color = vec4(.5+.5*lightning, .5+.5*original, 1.-mod(floor(t/6.28318530718),2.), 1.); return; }\n"
             code += "vec2 UV = p / iResolution.xy, n = vec2(0); float focus = 6.;\n"
             code += "color = vec4(" + sample[1] + ", 1.);\n}\n"
             replacements.update(__SHADER_CODE__=json.dumps(code),

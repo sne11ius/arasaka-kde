@@ -297,7 +297,7 @@ def main():
                 expected = {
                     "selectedShaderPath": (artwork / "shaders" / SHADER).as_uri(), "selectedShaderCode": "",
                     "iChannel0": (artwork / image).as_uri(), "iChannel0Enabled": True, "imageChannel0": 0,
-                    "running": True, "shaderSpeed": 1, "targetFps": 30, "resolutionScale": 1,
+                    "running": True, "shaderSpeed": 0.75, "targetFps": 30, "resolutionScale": 1,
                     "pauseMode": 0, "checkActiveScreen": True, "excludeWindows": [],
                     "mouseEnabled": False, "audioEnabled": False, "windowsEnabled": False,
                     "playlistEnabled": False, "enableShaderTweaks": False, "commonCode": "",

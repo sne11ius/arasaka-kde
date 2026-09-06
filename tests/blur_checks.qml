@@ -67,6 +67,30 @@ Item {
             compare(image.pixel(Math.floor(image.width / 2), Math.floor(image.height / 2)).a, 1)
         }
 
+        function test_lightning_skips_alternate_bursts() {
+            engine.iMouse = Qt.vector4d(0, -1, 0, 0)
+            var frame = engine.iFrame
+            tryVerify(() => engine.iFrame > frame + 3, 10000)
+            verify(waitForRendering(engine, 5000))
+            var image = grabImage(engine)
+            var kept = 0, skipped = 0, keptError = 0, skippedError = 0
+            for (var x = 0; x < image.width; x++) {
+                var pixel = image.pixel(x, Math.floor(image.height / 2))
+                if (pixel.b > 0.5) {
+                    keptError = Math.max(keptError, Math.abs(pixel.r - pixel.g))
+                    if (Math.abs(pixel.g - 0.5) > 0.05) kept++
+                } else {
+                    skippedError = Math.max(skippedError, Math.abs(pixel.r - 0.5))
+                    if (Math.abs(pixel.g - 0.5) > 0.05) skipped++
+                }
+            }
+            compare(engine.compileLog, "")
+            console.log("Lightning samples kept/skipped:", kept, skipped, "errors:", keptError, skippedError)
+            verify(kept > 10 && skipped > 10, "Must sample active lightning in both sets of cycles")
+            verify(keptError < 0.01, "Retained flashes must preserve their original intensity and duration")
+            verify(skippedError < 0.01, "Alternate lightning bursts must be absent")
+        }
+
         function cleanup() {
             engine.iChannel0 = __EDGE_URL__
             engine.iMouse = Qt.vector4d(0, 0, 0, 0)
