@@ -30,10 +30,24 @@ specific, not a complete desktop recovery system.
 
 The launcher replaces the managed top bar and laptop rail with a desktop-hosted
 native QML popup. There are no managed bars or hidden edge panels. Press **Super**
-to toggle the menu and system tray centered on the **main display**, regardless of
-pointer or active-window location; **Escape** dismisses it. Kickoff and
-the tray are KDE's stock applets, including native tray submenus, rather than
-copied implementations. Unmanaged panels are not removed. The layout requires
+to open a compact, focused application search on the **main display**, regardless
+of pointer or active-window location. Every opening starts with an empty field,
+a **Full Menu** button, and the native system tray below. Typing reveals up to six
+rows of matches before scrolling; arrow keys select a match and **Enter** launches
+it and closes the popup. The six-row results area stays reserved even when empty,
+so typing, changing matches, and clearing the query never move the search field
+or tray. An empty search shows no favorites or suggestions.
+**Escape** or pressing **Super** again dismisses it.
+
+**Full Menu** expands the same popup into KDE's stock Kickoff, including favorites,
+application categories, locations, and session actions. **Back to Search** restores
+the compact view and its query. The tray stays below either view, including native
+tray submenus. Compact search uses KDE's application runner (`krunner_services`),
+not file, browser-history, calculator, or shell-command providers; native app
+actions can also appear. This requires the application runner to remain enabled
+in KDE's search settings. Its private Kicker API is verified on Plasma 6.7.2 and
+should be rechecked after Plasma upgrades. Kickoff and the tray are embedded stock
+applets, not copied implementations. Unmanaged panels are not removed. The layout requires
 the loaded host to acknowledge the current Plasma session token before removing
 managed panels; a saved `ready=true` alone is not sufficient.
 
@@ -120,9 +134,12 @@ opt-in native integration test inside a Wayland session:
 python3 tests/launcher_smoke.py
 ```
 
-It uses isolated settings and a private D-Bus session, briefly displaying the real
-Kickoff and tray. It checks fresh readiness acknowledgements, placement, typing,
-tray popup interaction, closing/reopening, Escape, and focus-loss dismissal.
+It uses isolated settings and a private D-Bus session, briefly displaying compact
+search, the real Kickoff, and the tray. It checks readiness acknowledgements,
+placement, keyboard and mouse launching, scrolling, query replacement and pending
+launch cancellation, switching views, tray interaction, reopening, Escape, and
+focus-loss dismissal. Temporary desktop entries launch only marker-file commands;
+the test also requires `kbuildsycoca6` to index these fixtures.
 The clipboard applet requires a real window system; Qt's offscreen backend is not
 supported. Missing-service warnings in the isolated bus are expected.
 

@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import org.kde.draganddrop as DragDrop
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.core as PlasmaCore
+import org.kde.plasma.components as PC3
 import org.kde.plasma.plasmoid
 
 ContainmentItem {
@@ -21,6 +22,7 @@ ContainmentItem {
     // Plasma 6.7's hidden-items layout belongs to the tray's shared popup.
     readonly property var trayPopup: trayItem && trayItem.hiddenLayout ? trayItem.hiddenLayout.Window.window : null
     property bool focusAcquired: false
+    property bool fullMenu: false
     property var targetScreen: Qt.application.screens[0]
     readonly property bool ready: launcherItem !== null && launcherItem.fullRepresentationItem !== null && trayItem !== null
     readonly property string requestToken: Plasmoid.configuration.requestToken
@@ -60,6 +62,7 @@ ContainmentItem {
 
     function close() {
         focusAcquired = false;
+        compactSearch.launchQuery = "";
         // The native tray advertises an open subpopup through its applet status.
         if (trayItem && trayItem.plasmoid.status === PlasmaCore.Types.RequiresAttentionStatus) {
             trayItem.plasmoid.activated();
@@ -82,6 +85,18 @@ ContainmentItem {
         }
     }
 
+    function showFullMenu() {
+        fullMenu = true;
+        launcherItem.expanded = true;
+        launcherItem.fullRepresentationItem.forceActiveFocus(Qt.ShortcutFocusReason);
+    }
+
+    function showSearch() {
+        fullMenu = false;
+        launcherItem.expanded = false;
+        compactSearch.focusSearch();
+    }
+
     function toggle() {
         if (popup.visible) {
             close();
@@ -99,13 +114,14 @@ ContainmentItem {
         }
         targetScreen = screen;
         focusAcquired = false;
-        launcherItem.expanded = true;
+        fullMenu = false;
+        compactSearch.reset();
         popup.visible = true;
         center();
         popup.requestActivate();
         // Rapid reopening can keep the window active without another activeChanged.
         focusAcquired = popup.active;
-        launcherItem.fullRepresentationItem.forceActiveFocus(Qt.ShortcutFocusReason);
+        compactSearch.focusSearch();
     }
 
     Containment.onAppletAdded: applet => root.attach(applet)
@@ -142,7 +158,7 @@ ContainmentItem {
     Connections {
         target: root.launcherItem
         function onExpandedChanged(expanded) {
-            if (!expanded && popup.visible) {
+            if (!expanded && popup.visible && root.fullMenu) {
                 root.close();
             }
         }
@@ -213,8 +229,11 @@ ContainmentItem {
 
         mainItem: FocusScope {
             id: content
-            width: Math.min(root.targetScreen ? root.targetScreen.width - 48 : 720, Math.max(640, root.launcherItem ? root.launcherItem.Layout.minimumWidth : 0))
-            height: Math.min(root.targetScreen ? root.targetScreen.height - 48 : 620, Math.max(480, root.launcherItem ? root.launcherItem.Layout.minimumHeight : 0) + 56)
+            width: Math.min(root.targetScreen ? root.targetScreen.width - 48 : 720,
+                root.fullMenu ? Math.max(640, root.launcherItem ? root.launcherItem.Layout.minimumWidth : 0) : 560)
+            height: Math.min(root.targetScreen ? root.targetScreen.height - 48 : 620,
+                root.fullMenu ? Math.max(480, root.launcherItem ? root.launcherItem.Layout.minimumHeight : 0) + backButton.implicitHeight + 56
+                    : compactSearch.implicitHeight + 56)
             focus: true
             Keys.onEscapePressed: root.close()
 
@@ -222,8 +241,29 @@ ContainmentItem {
                 anchors.fill: parent
                 spacing: Kirigami.Units.smallSpacing
 
+                CompactSearch {
+                    id: compactSearch
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    visible: !root.fullMenu
+                    onFullMenuRequested: root.showFullMenu()
+                    onCloseRequested: root.close()
+                }
+
+                PC3.ToolButton {
+                    id: backButton
+                    objectName: "backToSearchButton"
+                    visible: root.fullMenu
+                    text: i18n("Back to Search")
+                    icon.name: "go-previous"
+                    onClicked: root.showSearch()
+                }
+
                 Item {
                     id: menuSlot
+                    // Kickoff needs a visible, nonzero slot to initialize before first use.
+                    visible: root.fullMenu || !root.ready
+                    Layout.minimumHeight: root.ready ? 0 : 480
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                 }
