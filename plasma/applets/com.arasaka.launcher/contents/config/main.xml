@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0">
+    <kcfgfile name=""/>
+    <group name="General">
+        <entry name="primaryConnector" type="String"/>
+        <entry name="ready" type="Bool">
+            <default>false</default>
+        </entry>
+        <entry name="requestToken" type="String"/>
+        <entry name="readyToken" type="String"/>
+    </group>
+</kcfg>

@@ -1,126 +1,87 @@
 var primaryConnector = "__PRIMARY_CONNECTOR__";
-var internalConnector = "__INTERNAL_CONNECTOR__";
 var home = "__HOME__";
 var primaryScreen = screenForConnector(primaryConnector);
-var internalScreen = internalConnector ? screenForConnector(internalConnector) : -1;
+var launcherPlugin = "com.arasaka.launcher";
+var launcherSession = "__LAUNCHER_SESSION__";
 
-if (primaryScreen < 0 || (internalConnector && internalScreen < 0)) {
-    throw new Error("Arasaka display connectors are not available in Plasma yet");
+if (primaryScreen < 0) {
+    throw new Error("Arasaka primary display connector is not available in Plasma yet");
 }
 
-var colorizerSettings = __COLORIZER_SETTINGS__;
+// Plasma exposes the installed plugin list as knownWidgetTypes.
+var availableWidgetTypes = knownWidgetTypes;
+if (availableWidgetTypes.indexOf(launcherPlugin) < 0) {
+    throw new Error("Arasaka launcher package is not available in Plasma yet");
+}
 
-function config(widget, group, values) {
-    widget.currentConfigGroup = [group];
-    Object.keys(values).forEach(function(key) {
-        widget.writeConfig(key, values[key]);
+var existingDesktops = desktops();
+var activity = currentActivity();
+var primaryDesktop = existingDesktops.filter(function(desktop) {
+    desktop.currentConfigGroup = [];
+    return desktop.screen === primaryScreen && desktop.readConfig("activityId", "") === activity;
+})[0];
+
+if (!primaryDesktop) {
+    throw new Error("Arasaka primary desktop is not available in the current activity yet");
+}
+
+var managedHosts = [];
+existingDesktops.forEach(function(desktop) {
+    desktop.widgetIds.forEach(function(id) {
+        var widget = desktop.widgetById(id);
+        if (widget && widget.type === launcherPlugin) {
+            widget.currentConfigGroup = ["Arasaka"];
+            if (String(widget.readConfig("Managed", "false")) === "true") {
+                managedHosts.push({desktop: desktop, widget: widget});
+            }
+        }
     });
-    widget.reloadConfig();
-}
-
-function addColorizer(panel) {
-    var widget = panel.addWidget("luisbocanegra.panel.colorizer");
-    config(widget, "General", {
-        hideWidget: true,
-        globalSettings: JSON.stringify(colorizerSettings),
-        forceForegroundColor: JSON.stringify({widgets: [], reloadInterval: 250})
-    });
-}
-
-function addMonitor(panel, plugin, title, face) {
-    var widget = panel.addWidget(plugin);
-    config(widget, "Appearance", {title: title, chartFace: face});
-    return widget;
-}
-
-function markPanel(panel, role) {
-    panel.currentConfigGroup = ["Arasaka"];
-    panel.writeConfig("Managed", true);
-    panel.writeConfig("Role", role);
-}
-
-function createCommandStrip(screen) {
-    var panel = new Panel;
-    panel.screen = screen;
-    panel.location = "top";
-    panel.lengthMode = "fill";
-    panel.hiding = "none";
-    panel.height = 44;
-    panel.floating = false;
-    markPanel(panel, "command-strip");
-
-    var launcher = panel.addWidget("org.kde.plasma.kickoff");
-    config(launcher, "General", {
-        icon: home + "/.local/share/icons/arasaka-launcher.svg",
-        favorites: "applications:org.kde.dolphin.desktop,applications:firefox.desktop,applications:org.kde.konsole.desktop,applications:systemsettings.desktop"
-    });
-
-    var title = panel.addWidget("com.github.antroids.application-title-bar");
-    config(title, "Appearance", {
-        widgetElements: "windowIcon,windowTitle",
-        windowTitleFontSize: 11,
-        windowTitleFontBold: true,
-        windowTitleMaximumWidth: 640,
-        windowTitleUndefined: "ARASAKA // SECURE OPERATIONS",
-        widgetToolTipMode: 0
-    });
-
-    panel.addWidget("org.kde.plasma.marginsseparator");
-    var leftSpacer = panel.addWidget("org.kde.plasma.panelspacer");
-    config(leftSpacer, "General", {expanding: true});
-    panel.addWidget("org.kde.plasma.mediacontroller");
-    var rightSpacer = panel.addWidget("org.kde.plasma.panelspacer");
-    config(rightSpacer, "General", {expanding: true});
-    addMonitor(panel, "org.kde.plasma.systemmonitor.cpu", "CPU", "org.kde.ksysguard.textonly");
-    addMonitor(panel, "org.kde.plasma.systemmonitor.memory", "MEM", "org.kde.ksysguard.textonly");
-    addMonitor(panel, "org.kde.plasma.systemmonitor.net", "NET", "org.kde.ksysguard.textonly");
-    panel.addWidget("org.kde.plasma.marginsseparator");
-    panel.addWidget("org.kde.plasma.systemtray");
-    addColorizer(panel);
-}
-
-function createTelemetryRail(screen) {
-    var panel = new Panel;
-    panel.screen = screen;
-    panel.location = "right";
-    panel.lengthMode = "fill";
-    panel.hiding = "none";
-    panel.height = 54;
-    panel.floating = false;
-    markPanel(panel, "telemetry-rail");
-
-    addMonitor(panel, "org.kde.plasma.systemmonitor.cpu", "CPU", "org.kde.ksysguard.colorgrid");
-    addMonitor(panel, "org.kde.plasma.systemmonitor.memory", "RAM", "org.kde.ksysguard.horizontalbars");
-    addMonitor(panel, "org.kde.plasma.systemmonitor.net", "NET", "org.kde.ksysguard.linechart");
-    panel.addWidget("org.kde.plasma.mediacontroller");
-    panel.addWidget("org.kde.plasma.battery");
-    var curve = panel.addWidget("luisbocanegra.audio.visualizer");
-    config(curve, "General", {
-        active: true,
-        barCount: 22,
-        barWidth: 3,
-        barGap: 2,
-        roundedBars: false,
-        fillPanel: true,
-        expanding: true,
-        minimumLength: 180,
-        hideWhenIdle: false,
-        barColors: JSON.stringify({colors: [{color: "#e60012", position: 0}, {color: "#e8e9ea", position: 1}]})
-    });
-    addColorizer(panel);
-}
-
-var previousPanels = panels().filter(function(panel) {
-    panel.currentConfigGroup = ["Arasaka"];
-    return String(panel.readConfig("Managed", "false")) === "true";
 });
-previousPanels.forEach(function(panel) { panel.remove(); });
-createCommandStrip(primaryScreen);
-if (internalScreen >= 0 && internalScreen !== primaryScreen) {
-    createTelemetryRail(internalScreen);
+
+var existingHost = managedHosts.filter(function(host) {
+    return host.desktop.id === primaryDesktop.id;
+})[0] || managedHosts[0];
+var launcher;
+if (existingHost) {
+    launcher = existingHost.widget;
+    // Plasma 6.7's addWidget(existing) mis-migrates CustomEmbedded config trees.
+    // Keep ownership stable; popup placement follows the configured primary output.
+} else {
+    launcher = primaryDesktop.addWidget(launcherPlugin);
 }
 
-desktops().forEach(function(desktop) {
+// addWidget can return an Error value rather than throwing.
+var owner = existingHost ? existingHost.desktop : primaryDesktop;
+if (!launcher || launcher.type !== launcherPlugin || !launcher.id || !owner.widgetById(launcher.id)) {
+    throw new Error("Arasaka launcher could not be placed on the primary desktop; keeping existing panels");
+}
+if (!existingHost) {
+    launcher.currentConfigGroup = ["Arasaka"];
+    launcher.writeConfig("Managed", true);
+    launcher.reloadConfig();
+}
+
+launcher.currentConfigGroup = ["General"];
+launcher.writeConfig("primaryConnector", primaryConnector);
+launcher.writeConfig("requestToken", launcherSession);
+launcher.reloadConfig();
+if (String(launcher.readConfig("ready", "false")) !== "true" || launcher.readConfig("readyToken", "") !== launcherSession) {
+    throw new Error("Arasaka launcher is still loading; keeping existing panels");
+}
+
+managedHosts.forEach(function(host) {
+    if (host.widget.id !== launcher.id) {
+        host.widget.remove();
+    }
+});
+panels().forEach(function(panel) {
+    panel.currentConfigGroup = ["Arasaka"];
+    if (String(panel.readConfig("Managed", "false")) === "true") {
+        panel.remove();
+    }
+});
+
+if ("__APPLY_WALLPAPERS__" === "true") desktops().forEach(function(desktop) {
     desktop.currentConfigGroup = ["General"];
     desktop.writeConfig("filterMode", 1);
     desktop.writeConfig("filterPattern", "__ARASAKA_DESKTOP_ITEMS_HIDDEN__");

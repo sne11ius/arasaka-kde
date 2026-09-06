@@ -5,6 +5,9 @@ repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 data_home=${XDG_DATA_HOME:-$HOME/.local/share}
 config_home=${XDG_CONFIG_HOME:-$HOME/.config}
 
+# Validate/stage the launcher before any unrelated full-theme changes.
+"$repo_root/bin/apply-launcher" --install-only
+
 install_upstream_visuals() {
   local daemon_archive daemon_root lockscreen_archive lockscreen_root stage
   local system_shell="$1" overlay_shell="$2" item base
@@ -80,10 +83,6 @@ install -Dm644 "$repo_root/theme/plasma/desktoptheme/com.arasaka.mikoshi/colors"
 install -Dm644 "$repo_root/theme/plasma/desktoptheme/com.arasaka.mikoshi/plasmarc" "$data_home/plasma/desktoptheme/com.arasaka.mikoshi/plasmarc"
 install -Dm644 "$repo_root/systemd/arasaka-display-reconcile.service" "$config_home/systemd/user/arasaka-display-reconcile.service"
 install -Dm644 "$repo_root/systemd/arasaka-display-reconcile.path" "$config_home/systemd/user/arasaka-display-reconcile.path"
-install -Dm755 "$repo_root/bin/reconcile-displays" "$HOME/.local/libexec/arasaka-kde/reconcile-displays"
-install -Dm644 "$repo_root/lib/arasaka_topology.py" "$HOME/.local/libexec/arasaka-kde/arasaka_topology.py"
-install -Dm644 "$repo_root/plasma/layout.js" "$HOME/.local/libexec/arasaka-kde/layout.js"
-install -Dm644 "$repo_root/theme/panel-colorizer/Arasaka.json" "$HOME/.local/libexec/arasaka-kde/Arasaka.json"
 install -Dm644 "$repo_root/environment.d/arasaka.conf" "$config_home/environment.d/arasaka.conf"
 install -Dm644 "$repo_root/theme/plasma/look-and-feel/com.arasaka.mikoshi/metadata.json" "$data_home/plasma/look-and-feel/com.arasaka.mikoshi/metadata.json"
 install -Dm644 "$repo_root/theme/plasma/look-and-feel/com.arasaka.mikoshi/contents/splash/Splash.qml" "$data_home/plasma/look-and-feel/com.arasaka.mikoshi/contents/splash/Splash.qml"
@@ -247,7 +246,8 @@ qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.start
 qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript arasaka-tile-padding >/dev/null
 rm -f "$tile_padding_script"
 "$repo_root/bin/apply-window-effects"
-"$HOME/.local/libexec/arasaka-kde/reconcile-displays"
+"$repo_root/bin/apply-launcher"
+"$HOME/.local/libexec/arasaka-kde/reconcile-displays" --force --wallpapers
 systemctl --user enable --now arasaka-display-reconcile.path
 path_disabled=false
 trap - EXIT

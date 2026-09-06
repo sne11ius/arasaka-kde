@@ -16,6 +16,7 @@ state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/arasaka-kde
 state_file=$state_dir/topology
 force=false
 dry_run=false
+apply_wallpapers=false
 json_file=
 while (($#)); do
   case $1 in
@@ -24,6 +25,9 @@ while (($#)); do
       ;;
     --dry-run)
       dry_run=true
+      ;;
+    --wallpapers)
+      apply_wallpapers=true
       ;;
     --json)
       [[ $# -ge 2 ]] || { printf 'error: --json requires a file\n' >&2; exit 2; }
@@ -37,6 +41,7 @@ while (($#)); do
   esac
   shift
 done
+[[ -z $json_file ]] || $dry_run || { printf 'error: --json requires --dry-run\n' >&2; exit 2; }
 mkdir -p "$state_dir"
 exec 9>"$state_dir/reconcile.lock"
 flock -n 9 || exit 0
@@ -51,8 +56,6 @@ if $dry_run; then
   python3 "$engine" <<<"$output_json"
   exit 0
 fi
-
-[[ -z $json_file ]] || { printf 'error: --json requires --dry-run\n' >&2; exit 2; }
 
 plan_json=$(python3 "$engine" <<<"$output_json")
 if [[ $(jq -r '.status // "ready"' <<<"$plan_json") == no-enabled-outputs ]]; then
@@ -87,8 +90,14 @@ for _ in {1..20}; do
 done
 qdbus6 org.kde.plasmashell /PlasmaShell org.freedesktop.DBus.Peer.Ping >/dev/null
 
+bus_id=$(qdbus6 org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.GetId)
+shell_owner=$(qdbus6 org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.GetNameOwner org.kde.plasmashell)
+[[ -n $bus_id && $shell_owner == :* ]] || { printf 'error: could not identify the live Plasma session\n' >&2; exit 1; }
+
 colorizer=$(jq -c . "$colorizer_settings")
 script=$(<"$layout")
+script=${script//__LAUNCHER_SESSION__/$bus_id\/$shell_owner}
+script=${script//__APPLY_WALLPAPERS__/$apply_wallpapers}
 script=${script//__PRIMARY_CONNECTOR__/$primary}
 script=${script//__INTERNAL_CONNECTOR__/$internal}
 script=${script//__HOME__/$HOME}

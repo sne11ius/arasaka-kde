@@ -1,0 +1,15 @@
+{
+    "KPlugin": {
+        "Id": "com.arasaka.launcher",
+        "Name": "Arasaka Launcher",
+        "Description": "On-demand application menu and system tray",
+        "Icon": "start-here-kde",
+        "Category": "Application Launchers",
+        "Version": "1.0.0",
+        "License": "MIT"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.7",
+    "X-Plasma-ContainmentType": "CustomEmbedded",
+    "X-Plasma-Provides": ["org.kde.plasma.launchermenu"]
+}

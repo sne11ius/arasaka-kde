@@ -26,22 +26,6 @@ class SystemdUnitsTest(unittest.TestCase):
         self.assertNotIn(str(REPO_ROOT), service + path_unit)
         self.assertNotIn("/home/cwichering", service + path_unit)
 
-    def test_apply_deploys_reconciler_and_engine_to_libexec(self):
-        apply_source = (REPO_ROOT / "bin" / "apply-live").read_text(encoding="utf-8")
-
-        self.assertIn(
-            '"$HOME/.local/libexec/arasaka-kde/reconcile-displays"', apply_source
-        )
-        self.assertIn(
-            '"$HOME/.local/libexec/arasaka-kde/arasaka_topology.py"', apply_source
-        )
-        self.assertIn(
-            '"$HOME/.local/libexec/arasaka-kde/layout.js"', apply_source
-        )
-        self.assertIn(
-            '"$HOME/.local/libexec/arasaka-kde/Arasaka.json"', apply_source
-        )
-
     def test_reconciler_runs_from_deployed_libexec_layout(self):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary) / "home"
