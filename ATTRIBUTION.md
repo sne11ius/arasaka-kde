@@ -26,3 +26,60 @@ configuration schema are adapted from Burn-My-Windows; its event handling reuses
 the upstream shader for minimization, restoration, and interrupted-animation
 reversal. The upstream open/close script is not modified. The GPL text is included
 in `LICENSES/GPL-3.0-or-later.txt` and installed with both effects.
+
+[Shader Wallpaper](https://github.com/y4my4my4m/kde-shader-wallpaper) is by
+@y4my4my4m (@y4my4m), licensed under GPL-3.0-or-later. Commit
+`6a8c01eb7c3a47a0991707561da737b365553247` is pinned with its source archive hash
+in `manifest/components.tsv`. The user-local package includes upstream's
+`LICENSE`; its native plugin is built into the package, not installed system-wide.
+Bundled shaders retain their individual licenses rather than inheriting the
+wallpaper engine's GPL license.
+
+**Heartfelt** is by Martijn Steinrucken, aka BigWings (2017), under
+[Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported](https://creativecommons.org/licenses/by-nc-sa/3.0/).
+The pinned [upstream shader](https://github.com/y4my4my4m/kde-shader-wallpaper/blob/6a8c01eb7c3a47a0991707561da737b365553247/package/contents/ui/Shaders/Heartfelt.frag)
+retains his contact details and credits Dave Hoskins for the hash function.
+The upstream package also adapts the texture's vertical orientation for its engine.
+`assets/wallpapers/shaders/heartfelt-no-heart.patch` is Arasaka KDE's local
+adaptation: it disables the `HAS_HEART` switch and adds attribution/source notes
+for the no-heart rain effect over the existing Arasaka artwork. The generated
+`Heartfelt_No_Heart.frag` preserves the upstream header and remains subject to
+CC BY-NC-SA 3.0, including its noncommercial and share-alike conditions. It does
+not replace the original packaged shader; the complete shader source is fetched
+from the pinned archive rather than duplicated in this repository.
+
+**Tokyo** ([Shadertoy Xtf3zn](https://www.shadertoy.com/view/Xtf3zn)) is by
+Reinder Nijhoff (`reinder`, 2014), under the explicit
+[CC BY-NC-SA 4.0 International license](https://creativecommons.org/licenses/by-nc-sa/4.0/).
+The installer uses the author's [GLSL backup](https://github.com/reindernijhoff/shadertoy/blob/2def3ce132b4f5d9590e9eee0c17bd37a011835c/tokyo/Image.glsl)
+at commit `2def3ce132b4f5d9590e9eee0c17bd37a011835c`, pinned as `shader-tokyo`.
+Original credits include Eiffie's car model from
+[Shiny Toy](https://www.shadertoy.com/view/ldsGWB), Dave Hoskins for the rain,
+and iq for `smin`. Installation removes the UTF-8 BOM and prepends attribution
+and channel-routing comments; executable source and letterboxing are unchanged.
+
+**Dusti [237 Chars]** ([Shadertoy tcXXDB](https://www.shadertoy.com/view/tcXXDB))
+is by `HellMood`. Its [archived API JSON](https://github.com/GabeRundlett/shadertoy-api-shaders/blob/f6d538adf936215ccf2d11ba9b4a6c79ccb448c5/shaders/tcXXDB.json)
+at commit `f6d538adf936215ccf2d11ba9b4a6c79ccb448c5` (2025-05-29) is pinned as
+`shader-dusti`. All decoded GLSL comments are retained, including credits to
+Xor's [Dust](https://www.shadertoy.com/view/cdG3Wd), FabriceNeyret2's
+[bufferless version](https://www.shadertoy.com/view/DlGyWt), gopher/xor, and catnip.
+No author-supplied license override was found in this archived source or its
+metadata. Shadertoy's [public default licensing terms](https://www.shadertoy.com/terms)
+therefore indicate [CC BY-NC-SA 3.0 Unported](https://creativecommons.org/licenses/by-nc-sa/3.0/),
+not the mirror repository's license. The current live shader/license could not
+be checked; this records the frozen public snapshot, not a current-page claim.
+In addition to attribution and explicit no-input channel-routing comments,
+`assets/wallpapers/shaders/dusti.patch` adds `O.a = 1.0` after the active Image
+pass's calculations. This opaque-alpha adapter leaves RGB calculations unchanged.
+It addresses the original's all-white/static output observed in GPU smoke checks;
+the alpha-only variant produced visible animated desert geometry. The original
+uninitialized locals and commented alternative are retained, so portability across
+other GPU drivers remains a risk. The adaptation retains the same CC BY-NC-SA 3.0
+conditions and is identified in the installed shader header and gallery description.
+
+Both imports are single Image passes without textures, buffers, or audio assets.
+They remain subject to their individual noncommercial and share-alike conditions,
+not the wallpaper engine's GPL license. Complete sources are fetched rather than
+duplicated in this repository; author and license details also appear in the
+installed gallery descriptions and shader headers.

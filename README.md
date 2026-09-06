@@ -177,6 +177,139 @@ selects TV Glitch again. Its shared applied duration is set in
 `bin/apply-window-effects`; the local minimize effect's Reset default is in its
 `contents/config/main.xml`.
 
+## Shader Wallpaper
+
+The wallpaper uses **Heartfelt without the heart sequence**, over the existing
+Arasaka/Mikoshi artwork, through
+[kde-shader-wallpaper](https://github.com/y4my4my4m/kde-shader-wallpaper).
+All existing desktops use 30 FPS, full resolution, normal shader speed, and
+pause for maximized/fullscreen windows on their respective screen. Mouse and
+audio capture, window-reactive shader input, playlists, and buffer passes are
+disabled. Only texture channel 0 is enabled.
+
+```sh
+./bin/apply-shader-wallpaper --install-only
+./bin/apply-shader-wallpaper
+```
+
+Run as the desktop user, without `sudo`. The first command builds, validates,
+backs up, and installs artifacts without any live session calls. The default
+command does the same work and then applies only `plasma/shader-wallpaper.js`
+through Plasma's D-Bus scripting API. It requires a nonempty set of existing
+desktops with valid screen IDs, including the primary screen; one or more
+desktops are supported. Parked containments with screen `-1` are left untouched.
+It maps the external-preferred primary connector using
+`kscreen-doctor --json` and `lib/arasaka_topology.py`. It does not reconfigure
+outputs, change launchers/panels, deploy runtime layout policy, or restart Plasma.
+
+Build prerequisites are Python 3.12+, CMake 3.22+, a C++20 compiler, KDE ECM and
+Frameworks 6 development packages (Config, I18n, Package), Plasma/PlasmaQuick
+development packages, Qt 6.6+ (Core, Quick, Qml, Gui, OpenGL, Network, Multimedia,
+DBus), and `pkg-config`. Runtime/build tooling also needs Bash, `curl`,
+`sha256sum`, `patch`, and `rsvg-convert`; activation additionally needs `qdbus6`
+and `kscreen-doctor`. Optional native dependencies follow upstream CMake checks.
+No dependency packages are installed automatically. Builds default to at most
+four parallel jobs; set `ARASAKA_SHADER_BUILD_JOBS=2`, for example, to lower that
+limit or explicitly choose another positive job count.
+
+The installer uses `fetch-components` and the immutable SHA-256-pinned archive
+in `manifest/components.tsv`. CMake configures and builds extracted temporary
+source, not the upstream checkout or live home. Neither upstream `build.sh` nor
+`cmake --install` is executed. The complete package, including the native plugin
+embedded under `contents/ui/shaderwallpaper/`, is deployed to
+`${XDG_DATA_HOME:-$HOME/.local/share}/plasma/wallpapers/online.knowmad.shaderwallpaper`.
+Its relative QML import needs no system or separate user QML-module installation.
+
+The tracked inputs are `assets/wallpapers/mikoshi-16x9.svg`,
+`assets/wallpapers/mikoshi-16x10.svg`, and
+`assets/wallpapers/shaders/heartfelt-no-heart.patch`. Installation renders
+1920x1080 and 1600x1000 PNGs into `$XDG_DATA_HOME/wallpapers/Arasaka/`, using the
+same data-home fallback above. It copies upstream `Heartfelt.frag` to a separate
+`shaders/Heartfelt_No_Heart.frag` there and applies the patch with `-p1`, preserving
+the original author/license header. The packaged upstream shader is untouched.
+Background fog uses cubic B-spline filtering across adjacent mip levels, with a
+one-level bias toward finer detail. This reduces blur modestly and avoids the
+visible mip-grid corners produced by the original single linear sample as fog
+increases. Rain, trails, refraction, and lighting retain their original timing.
+Generated PNGs and the complete upstream shader are not committed to this repo.
+The shader and artwork are configured with escaped, absolute `file://` URLs.
+
+The gallery also offers **Tokyo** (`Xtf3zn`, Reinder Nijhoff) and **Dusti [237
+Chars]** (`tcXXDB`, HellMood). These are selectable alternatives, not changes to
+the default no-heart selection. The installer fetches their immutable raw
+resources through `fetch-components`, strips Tokyo's UTF-8 BOM, and extracts
+Dusti's single Image pass from the archived API JSON. Both are installed under
+the package's `contents/ui/Shaders/` as `Tokyo.frag` and `Dusti.frag`. Tokyo's
+executable code and both shaders' original credits are preserved. Dusti receives
+the alpha-only adapter described below. Added attribution and
+`// @channels none,none,none,none` headers prevent artwork/audio channel routing
+from carrying over when selected. Neither shader requires textures or buffers.
+
+The staged `shader_index.json` retains its upstream entries and gains credited
+entries for Tokyo, Dusti, and **Heartfelt No Heart**. The no-heart entry points to
+the external custom shader above and declares that it needs a texture, not audio.
+License information is included in descriptions as well as import headers;
+upstream may discard the additional JSON `license` field when resaving its index.
+Tokyo retains its original letterbox bars. Before adding the import header, the
+installer applies the required `assets/wallpapers/shaders/dusti.patch` with `-p1`
+to the staged original `Dusti.frag`. It adds only `O.a = 1.0` after the active
+shader's RGB calculations, leaving those calculations unchanged. GPU smoke checks
+found the original all-white/static and the opaque-alpha variant visibly animated;
+PS3 and Heartfelt baselines passed. Upstream's uninitialized local variables remain
+a portability risk on other drivers. Missing or failed patches prevent deployment.
+See `ATTRIBUTION.md` for
+the separate noncommercial/share-alike licenses and Dusti's archived evidence.
+
+Before replacement, the command prints a private backup directory under
+`${XDG_STATE_HOME:-$HOME/.local/state}/arasaka-kde/backups/shader-wallpaper-*`.
+It saves existing `plasma-org.kde.plasma.desktop-appletsrc` and `plasmashellrc`,
+the previous `package/`, replaced PNGs and custom shader under `artwork/`, and
+the existing `$HOME/.local/libexec/arasaka-kde/layout.js` under `runtime/`.
+Symlinked targets, their parents, and backup sources are refused. A failed build,
+patch, or artifact validation leaves the previous package, artwork, and Plasma
+configuration untouched. Backups may contain personal settings; keep them local.
+This is not an automatic transactional rollback system.
+
+Package replacement retains files absent from the new package under
+`contents/ui/Shaders/` and `Shaders6/`, including unindexed imports and complete
+custom bundle subdirectories with buffers/resources. Saved gallery entries and
+custom categories are carried forward; matching relative paths, absolute paths,
+and local `file://` URLs retain their IDs, favorites, and thumbnail references.
+Tokyo, Dusti, and the generated external no-heart shader remain managed and are
+updated rather than restored from old copies. Conflicting non-managed files
+(including edits to bundled shaders), file/directory collisions, and duplicate
+gallery IDs cause refusal before replacement, not silent overwrite. Preserve or
+rename the conflicting custom shader before retrying. Other package locations
+are replaced as before and remain available in the complete package backup.
+`--install-only` leaves the active shader selection and Plasma configuration alone.
+
+Activation requires an explicit success marker with JSON readback of the plugin,
+paths, and configuration on every target desktop. That verifies configuration, not GPU
+rendering or pause behavior. If Plasma has cached a previous native plugin/QML
+or has not discovered the new package, explicitly restart Plasma or log out/in
+and rerun the command. The installer never performs that restart automatically.
+For recovery, stop Plasma first, restore the saved configuration and affected
+package/artwork from the backup preceding the unwanted change, then start Plasma.
+Restore runtime policy only when undoing a separate integration change; this
+scoped installer backs it up but does not modify it. A snapshot's absence means
+that source did not exist before installation. Preserve unrelated artwork and
+runtime files. Full deployment and display reconciliation own persistent layout
+policy separately from this scoped installer.
+
+The opt-in GPU check can isolate the blur's edge response and capture light/heavy
+fog at fixed animation times, including a simulated hour of playback:
+
+```sh
+python3 tests/shader_smoke.py --blur-check \
+  --package "$HOME/.local/share/plasma/wallpapers/online.knowmad.shaderwallpaper" \
+  --shader "$HOME/.local/share/wallpapers/Arasaka/shaders/Heartfelt_No_Heart.frag" \
+  --texture "$HOME/.local/share/wallpapers/Arasaka/mikoshi-16x9.png" \
+  --screenshot /tmp/heartfelt-blur
+```
+
+This requires the Qt Quick Test runner, a working OpenGL session, and awake
+displays. It uses isolated settings and does not change the desktop wallpaper.
+
 ## Development
 
 Run all shell and Python tests:

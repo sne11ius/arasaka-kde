@@ -1,0 +1,10 @@
+--- a/Dusti.frag
++++ b/Dusti.frag
+@@ -26,6 +26,7 @@
+         v.xz *= .1*mat2(4,-9,9,4),
+         s = max( s, min( v = i*.8-abs(mod(v,i+i)-i), v.x) );//catnip
+         //s = max( s, min( v = i*.8-abs(mod(v,i+i)-i), min(v.x,v.z)) );//original
++    O.a = 1.0;
+ }
+ 
+ /*
