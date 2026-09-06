@@ -147,8 +147,12 @@ To install or reapply only the window effects:
 This fetches the SHA-256-verified Burn-My-Windows v48 TV Glitch package and builds
 two local KWin effects from it. The upstream `kwin6_effect_tv_glitch` handles
 open/close. The tracked overlay in
-`theme/kwin/effects/arasaka_tv_glitch_minimize/` handles minimize/restore using the
-same shader, including rapid-toggle reversal and animation cleanup. The overlay
+`theme/kwin/effects/arasaka_tv_glitch_minimize/` handles minimize/restore and popup
+show/hide using the same shader, including rapid-toggle reversal and animation
+cleanup. Regular windows retain 700 ms; the launcher, tray flyouts, menus,
+dropdowns, and tooltips use 300 ms. This covers separate KWin windows, not menus
+drawn inside an application's window. Popup Fade and Sliding Popups are disabled
+to avoid competing animations; lock-screen surfaces and outlines are excluded. The overlay
 is not a complete package on its own; the command supplies its upstream assets.
 No installed home-directory package is needed as an input.
 
@@ -173,8 +177,8 @@ qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.isEffectLoaded arasaka_tv_glit
 
 For a quick fallback, open **System Settings > Animations** and choose **Scale**
 for Window Open/Close and **Magic Lamp** for Window Minimize. Reapplying the rice
-selects TV Glitch again. Its shared applied duration is set in
-`bin/apply-window-effects`; the local minimize effect's Reset default is in its
+selects TV Glitch again. Window and popup durations are set in
+`bin/apply-window-effects`; the local effect's defaults are in its
 `contents/config/main.xml`.
 
 ## Shader Wallpaper

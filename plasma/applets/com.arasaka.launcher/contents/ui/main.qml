@@ -18,6 +18,8 @@ ContainmentItem {
 
     property Item launcherItem: null
     property Item trayItem: null
+    // Plasma 6.7's hidden-items layout belongs to the tray's shared popup.
+    readonly property var trayPopup: trayItem && trayItem.hiddenLayout ? trayItem.hiddenLayout.Window.window : null
     property bool focusAcquired: false
     property var targetScreen: Qt.application.screens[0]
     readonly property bool ready: launcherItem !== null && launcherItem.fullRepresentationItem !== null && trayItem !== null
@@ -71,7 +73,12 @@ ContainmentItem {
     function center() {
         if (targetScreen) {
             popup.x = Math.round(targetScreen.virtualX + (targetScreen.width - popup.width) / 2);
-            popup.y = Math.round(targetScreen.virtualY + (targetScreen.height - popup.height) / 2);
+            const centeredY = targetScreen.virtualY + (targetScreen.height - popup.height) / 2;
+            // Reserve the flyout's space even while hidden so opening it doesn't move the launcher.
+            const trayHeight = trayPopup
+                ? trayPopup.height + 2 * trayPopup.margin + Kirigami.Units.smallSpacing : 0;
+            popup.y = Math.round(Math.max(targetScreen.virtualY + 24,
+                Math.min(centeredY, targetScreen.virtualY + targetScreen.height - 24 - popup.height - trayHeight)));
         }
     }
 
@@ -138,6 +145,47 @@ ContainmentItem {
             if (!expanded && popup.visible) {
                 root.close();
             }
+        }
+    }
+
+    Binding {
+        target: root.trayPopup
+        property: "popupDirection"
+        value: Qt.BottomEdge
+        when: target !== null
+    }
+
+    Binding {
+        target: root.trayPopup
+        property: "floating"
+        value: true
+        when: target !== null
+    }
+
+    Binding {
+        target: root.trayPopup
+        property: "visualParent"
+        value: trayPopupAnchor
+        when: target !== null
+    }
+
+    Item {
+        id: trayPopupAnchor
+        // An explicit item anchor avoids Plasma using the Dialog's empty window mask.
+        parent: popup.contentItem
+        x: (popup.width - width) / 2
+        y: popup.height + Kirigami.Units.smallSpacing
+        width: traySlot.width
+        height: 0
+    }
+
+    Connections {
+        target: root.trayPopup
+        function onHeightChanged() {
+            root.center();
+        }
+        function onMarginChanged() {
+            root.center();
         }
     }
 

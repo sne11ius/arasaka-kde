@@ -18,6 +18,8 @@ effects_dir="$data_home/kwin/effects"
 upstream=kwin6_effect_tv_glitch
 minimize=arasaka_tv_glitch_minimize
 duration=700
+popup_duration=300
+conflicting_effects=(scale magiclamp squash fadingpopups slidingpopups)
 
 archive=$("$script_dir/fetch-components" tv-glitch)
 stage=$(mktemp -d)
@@ -52,21 +54,22 @@ for id in "$upstream" "$minimize"; do
     mv "$stage/$id" "$effects_dir/$id"
 done
 
-for id in scale magiclamp squash; do
+for id in "${conflicting_effects[@]}"; do
     kwriteconfig6 --file kwinrc --group Plugins --key "${id}Enabled" --type bool false
 done
 for id in "$upstream" "$minimize"; do
     kwriteconfig6 --file kwinrc --group Plugins --key "${id}Enabled" --type bool true
     kwriteconfig6 --file kwinrc --group "Effect-$id" --key Duration "$duration"
 done
+kwriteconfig6 --file kwinrc --group "Effect-$minimize" --key PopupDuration "$popup_duration"
 qdbus6 org.kde.KWin /KWin org.kde.KWin.reconfigure
-for id in scale magiclamp squash "$upstream" "$minimize"; do
+for id in "${conflicting_effects[@]}" "$upstream" "$minimize"; do
     qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.unloadEffect "$id"
 done
-for id in "$upstream" "$minimize"; do
+for id in "$minimize" "$upstream"; do
     [[ $(qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect "$id") == true ]] \
         || die "failed to load $id; backup: $backup; select Scale/Magic Lamp in System Settings > Animations"
     [[ $(qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.isEffectLoaded "$id") == true ]] \
         || die "$id is not loaded; backup: $backup"
 done
-log "TV Glitch enabled for open/close and minimize/restore at ${duration} ms."
+log "TV Glitch enabled for windows at ${duration} ms and popup show/hide at ${popup_duration} ms."

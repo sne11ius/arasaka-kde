@@ -12,6 +12,9 @@ SPDX-License-Identifier: GPL-3.0-or-later
     <entry name="Duration" type="UInt">
       <default>700</default>
     </entry>
+    <entry name="PopupDuration" type="UInt">
+      <default>300</default>
+    </entry>
     <entry name="Scale" type="Double">
       <default>1</default>
     </entry>
