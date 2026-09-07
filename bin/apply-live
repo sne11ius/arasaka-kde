@@ -188,8 +188,7 @@ kwriteconfig6 --file klassy/klassyrc --group Style --key FrameCornerRadius 1 --n
 kwriteconfig6 --file klassy/klassyrc --group Style --key FrameCustomCornerRadius 2 --notify
 kwriteconfig6 --file klassy/klassyrc --group Style --key MenuOpacity 88 --notify
 
-kwriteconfig6 --file kscreenlockerrc --group Greeter --group Wallpaper --group org.kde.image --group General --key Image "$data_home/wallpapers/Arasaka/mikoshi-16x9.png" --notify
-kwriteconfig6 --file kscreenlockerrc --group Greeter --group Wallpaper --group org.kde.image --group General --key PreviewImage "$data_home/wallpapers/Arasaka/mikoshi-16x9.png" --notify
+"$repo_root/bin/apply-lockscreen"
 kwriteconfig6 --file konsolerc --group TabBar --key TabBarPosition Bottom --notify
 kwriteconfig6 --file "$data_home/konsole/Quake.profile" --group Appearance --key ColorScheme Arasaka --notify
 kwriteconfig6 --file "$data_home/konsole/Quake.profile" --group Appearance --key Font "$fixed_font" --notify

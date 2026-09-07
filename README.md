@@ -140,6 +140,54 @@ distinguish next-boot selection from actual login and rendering. Do not run
 `apply-live`, `apply-launcher`, or desktop shader activation as part of migration.
 See `TODO.md` for the completion record and remaining clock-appearance check.
 
+## Lock Screen
+
+The Plasma lock screen is configured independently from PLM to use **Heartfelt
+No Heart without a clock/date**. It uses the existing user-local shader plugin and
+16:9 Mikoshi texture at 30 FPS, 75% speed and full resolution. Window-based pausing
+is disabled for this surface (`pauseMode=3`); mouse, audio, window-reactive inputs,
+playlists, source watching and buffer passes are off. Desktop settings and gallery
+contents are not changed.
+
+To apply only this appearance, run as the desktop user without sudo:
+
+```sh
+./bin/apply-lockscreen
+```
+
+The command requires the already-built user-local shader package and artwork,
+`kreadconfig6`, `kwriteconfig6`, Python 3 and `ldd`. It inspects the installed native
+module, dependencies and configuration schemas before writing. It stages and reads
+back the proposed appearance, then uses KConfig's locking/merge writer to update
+only the managed keys in `kscreenlockerrc`, selecting the wallpaper plugin last.
+It does not rebuild or replace assets, alter authentication/lock timing, change
+PLM, edit lockscreen QML, force a lock, or restart anything.
+
+The locker uses `[Greeter] WallpaperPlugin`, not PLM's `WallpaperPluginId`.
+Shader values live under
+`[Greeter][Wallpaper][online.knowmad.shaderwallpaper][General]`; the installed
+Silent lockscreen hides its clock and date with
+`[Greeter][LnF][General] alwaysShowClock=false`. Existing `[Daemon]` settings and
+the static-image configuration remain intact. Full `apply-live` calls this same
+scoped command after the desktop shader and lockscreen theme have been installed.
+
+Before writing, the command saves `kscreenlockerrc` privately under
+`${XDG_STATE_HOME:-$HOME/.local/state}/arasaka-kde/backups/lockscreen-*` and prints
+the path. The current backup is
+`$HOME/.local/state/arasaka-kde/backups/lockscreen-20260907-225436-v6rjgj9j/`.
+For a shader-only fallback without restoring potentially stale lock-policy values:
+
+```sh
+kwriteconfig6 --file kscreenlockerrc --group Greeter --key WallpaperPlugin org.kde.image
+```
+
+Configuration readback succeeded, including unchanged lock-policy values;
+desktop/KWin/gallery/PLM file hashes also remained unchanged. The next normal
+lock-screen start loads this configuration. Rendering and clock absence still
+need actual observation; no tests, synthetic previews or forced lock were run.
+The native renderer requires OpenGL; this command does not override global Qt
+settings or disable the locker's software-rendering crash recovery.
+
 ## Launcher
 
 The launcher replaces the managed top bar and laptop rail with a desktop-hosted
@@ -329,7 +377,7 @@ disabled. Only texture channel 0 is enabled.
 This is the only managed desktop wallpaper implementation. `apply-live` calls
 `apply-shader-wallpaper` once to build, back up, install, and activate the same
 Heartfelt No Heart defaults, including rendering the PNGs used by the shader and
-static lock screen. A shader installation/activation failure stops deployment
+static fallback. A shader installation/activation failure stops deployment
 rather than selecting another wallpaper.
 
 Launcher-only application leaves wallpaper selections alone. The full-theme

@@ -20,7 +20,9 @@ installed but disabled for recovery. See `TODO.md` for the completion record.
   30 FPS, full resolution, and 75% speed. Mouse/audio/window-reactive inputs are
   disabled. The primary texture is `mikoshi-16x9.png`.
 - Desktop renderer/artwork remain user-local; the greeter has independent
-  system-wide assets. The lock screen remains static and unchanged.
+  system-wide assets. The separate `apply-lockscreen` command configures the
+  user-local shader and hides the clock on the lock screen; PLM migration leaves
+  those settings untouched.
 - The repository and worktree can contain concurrent user changes. Re-read them
   before execution; do not revert, overwrite, stage, or commit unrelated work.
 
@@ -80,7 +82,8 @@ Hide the login clock with `[Greeter] ShowClock=false`. New migrations write this
 key in the managed configuration. The existing installation uses the separate
 root-owned mode-644 `/etc/plasmalogin.conf.d/arasaka-clock.conf`, keeping the
 original migration configuration byte-for-byte intact for standalone rollback.
-Do not change the lock-screen clock or restart a live display manager to apply it.
+Do not use PLM's clock setting to configure the lock screen: `apply-lockscreen`
+owns that separate appearance. Never restart a live display manager to apply it.
 
 Use Heartfelt No Heart, 30 FPS, 75% speed, full resolution, and the primary 16:9
 texture on PLM's greeter surfaces. Keep the same input/buffer/playlist opt-outs.

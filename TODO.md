@@ -21,10 +21,21 @@ from a TTY and reboot when ready. No rollback has been exercised.
 The user requested removal of the login clock. `ShowClock=false` is now readable
 in `/etc/plasmalogin.conf.d/arasaka-clock.conf` (root:root, 0644); new migrations
 also set it through `bin/apply-plm`. The main migration configuration and its
-original rollback snapshot were left unchanged. The lock screen is unchanged.
+original rollback snapshot were left unchanged. These PLM settings are separate
+from the Plasma lock-screen settings.
 
 - [ ] Confirm the clock is absent when the greeter next starts. Do not interrupt
   the current desktop solely for this visual check.
+
+The lock screen is now separately configured through `bin/apply-lockscreen` with
+Heartfelt No Heart, 30 FPS, 75% speed, full resolution and no clock/date. Actual
+configuration readback passed; `[Daemon]` values and desktop/KWin/gallery/PLM
+hashes remained unchanged. The backup is
+`$HOME/.local/state/arasaka-kde/backups/lockscreen-20260907-225436-v6rjgj9j/`.
+Full-theme deployment uses the same command; the PLM migration remains separate.
+
+- [ ] Observe the shader and clock-free appearance at the next normal lock.
+  No forced lock, preview or restart was performed for this change.
 
 Implementation references:
 
@@ -39,7 +50,8 @@ Ask before rebooting or otherwise terminating the running desktop session.
 
 - Preserve user accounts, passwords, groups, home directories, and session files.
 - Preserve desktop, KWin, launcher, display, application, shell, wallet, and
-  lock-screen configuration.
+  unrelated lock-screen configuration. Only the scoped lock-screen command
+  changes its requested wallpaper/clock appearance; never change lock policy.
 - Preserve the user-local shader package, imported shaders, gallery, and favorites.
 - Do not run `apply-live`, `apply-launcher`, or normal desktop shader activation
   as part of this migration.
@@ -72,7 +84,8 @@ Ask before rebooting or otherwise terminating the running desktop session.
   already been removed. Do not restore them.
 - PLM supports our shader plugin, but **cannot reuse SDDM's arbitrary QML login
   layout**. The new login screen uses PLM's UI with our animated background.
-- The lock screen remains unchanged in this iteration.
+- The lock screen now has its own shader/no-clock appearance settings, applied
+  separately from PLM without changing authentication or lock timing.
 
 ## 1. Capture The Current State
 
