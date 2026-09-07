@@ -6,7 +6,7 @@ const vm = require("vm");
 const options = JSON.parse(process.argv[3] || "{}");
 const launcherType = "com.arasaka.launcher";
 let nextId = 1;
-let primaryConnector = "DP-1";
+let primaryConnector = options.primaryConnector || "DP-1";
 const events = [];
 const panelModel = [];
 const children = new Map();
@@ -122,7 +122,7 @@ global.Panel = function() {
 };
 global.panels = function() { return panelModel.filter(panel => !panel.removed); };
 global.desktops = function() { return desktopModel; };
-global.currentActivity = function() { return "current"; };
+global.currentActivity = function() { return options.currentActivity ?? "current"; };
 global.screenForConnector = function(connector) {
     const connectors = options.connectors || {"DP-1": 0, "eDP-1": 1};
     return Object.prototype.hasOwnProperty.call(connectors, connector) ? connectors[connector] : -1;
@@ -151,7 +151,7 @@ function run() {
         .replaceAll("__INTERNAL_CONNECTOR__", "eDP-1")
         .replaceAll("__HOME__", "/tmp/test-home")
         .replaceAll("__LAUNCHER_SESSION__", "test-bus/:1.42")
-        .replaceAll("__APPLY_WALLPAPERS__", options.wallpapers ? "true" : "false")
+        .replaceAll("__HIDE_DESKTOP_ICONS__", options.hideDesktopIcons ? "true" : "false")
         .replace("__COLORIZER_SETTINGS__", "{}");
     let error = null;
     try {

@@ -245,8 +245,9 @@ def main():
             plan = json.loads(run("python3", str(repo / "lib/arasaka_topology.py"), input=topology, capture=True))
             if not plan.get("primary"):
                 raise ValueError("no primary connector in current display topology")
-            values = {"DATA_HOME": str(data), "PRIMARY_CONNECTOR": plan["primary"]}
-            script = re.sub(r"__(DATA_HOME|PRIMARY_CONNECTOR)_JSON__", lambda match: json.dumps(values[match[1]]),
+            values = {"DATA_HOME": str(data), "PRIMARY_CONNECTOR": plan["primary"],
+                      "ENABLED_CONNECTORS": json.loads(plan["signature"])["enabled"]}
+            script = re.sub(r"__(DATA_HOME|PRIMARY_CONNECTOR|ENABLED_CONNECTORS)_JSON__", lambda match: json.dumps(values[match[1]]),
                             (repo / "plasma/shader-wallpaper.js").read_text())
 
         # Back up all sources before replacing any of them, including existing runtime policy.

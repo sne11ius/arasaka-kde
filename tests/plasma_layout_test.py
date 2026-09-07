@@ -118,6 +118,32 @@ class PlasmaLayoutTest(unittest.TestCase):
         self.assertIsNotNone(model["first"]["error"])
         self.assertEqual(model["initial"]["panels"], model["first"]["panels"])
 
+    def test_existing_host_retargets_without_a_primary_desktop(self):
+        for connector, screens in (
+            ("eDP-1", {"eDP-1": 0}),
+            ("HDMI-A-1", {"HDMI-A-1": 0}),
+            ("DP-11", {"eDP-1": 0, "DP-11": 1, "DP-10": 2}),
+        ):
+            for activity in ("current", ""):
+                with self.subTest(connector=connector, activity=activity):
+                    model = run_layout(primaryConnector=connector, connectors=screens,
+                        currentActivity=activity, desktops=[
+                            {"screen": -1, "widgets": [{"type": LAUNCHER, "config": {
+                                "Arasaka/Managed": True, "General/primaryConnector": "DP-2",
+                                "General/nativeIds": "42,43",
+                            }}]},
+                        ])
+                    for run in ("first", "second"):
+                        self.assertIsNone(model[run]["error"])
+                        desktop, widget = hosts(model[run])[0]
+                        self.assertEqual(-1, desktop["screen"])
+                        self.assertEqual(hosts(model["initial"])[0][1]["id"], widget["id"])
+                        self.assertEqual(connector, widget["config"]["General/primaryConnector"])
+                        self.assertEqual("42,43", widget["config"]["General/nativeIds"])
+                        self.assertFalse(any(e["action"] in ("addWidget", "moveWidget")
+                                             for e in model[run]["events"]))
+                    self.assertEqual([], model["second"]["events"])
+
     def test_stale_managed_hosts_converge_without_touching_unmanaged_widgets(self):
         model = run_layout(desktops=[
             {"screen": 1, "widgets": [{"type": LAUNCHER, "config": {"Arasaka/Managed": "true"}}]},
@@ -142,27 +168,14 @@ class PlasmaLayoutTest(unittest.TestCase):
         self.assertEqual(model["initial"]["desktops"][0]["config"], model["first"]["desktops"][0]["config"])
         self.assertEqual("example.user.wallpaper", model["first"]["desktops"][0]["wallpaperPlugin"])
 
-    def test_full_theme_wallpaper_policy_is_explicitly_opt_in(self):
-        model = run_layout(wallpapers=True)
+    def test_full_theme_icon_policy_preserves_wallpapers(self):
+        model = run_layout(hideDesktopIcons=True)
         self.assertIsNone(model["first"]["error"])
-        for desktop, video in zip(model["first"]["desktops"], ("mikoshi-16x9.mp4", "mikoshi-16x10.mp4")):
-            self.assertEqual("luisbocanegra.smart.video.wallpaper.reborn", desktop["wallpaperPlugin"])
+        for desktop in model["first"]["desktops"]:
+            self.assertEqual("org.kde.image", desktop["wallpaperPlugin"])
             config = desktop["config"]
             self.assertEqual(1, config["General/filterMode"])
             self.assertEqual("__ARASAKA_DESKTOP_ITEMS_HIDDEN__", config["General/filterPattern"])
-            wallpaper = "Wallpaper/luisbocanegra.smart.video.wallpaper.reborn/General/"
-            self.assertEqual([{
-                "filename": "file:///tmp/test-home/.local/share/wallpapers/Arasaka/" + video,
-                "enabled": True, "duration": 0, "customDuration": 0,
-                "playbackRate": 0, "alternativePlaybackRate": 0, "loop": True,
-            }], json.loads(config[wallpaper + "VideoUrls"]))
-            expected = {
-                "BackgroundColor": "#07090c", "FillMode": 2, "PauseMode": 0,
-                "MuteMode": 5, "Volume": 0, "BatteryPausesVideo": True,
-                "PauseBatteryLevel": 20, "CrossfadeEnabled": True, "CrossfadeDuration": 1000,
-            }
-            for key, value in expected.items():
-                self.assertEqual(value, config[wallpaper + key])
 
 
 if __name__ == "__main__":

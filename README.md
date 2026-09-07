@@ -18,9 +18,10 @@ The current deployment command is:
 ```
 
 Run it as the desktop user inside the target Plasma session. It changes the live
-desktop, installs assets, generates wallpaper media, and configures applications.
-It assumes the required fonts, applets, Kvantum theme, and native KWin plugins are
-already installed. Full dependency provisioning is still unfinished.
+desktop, installs assets, builds and applies the shader wallpaper, and configures
+applications. It requires the shader build prerequisites listed below and assumes
+the required fonts, applets, Kvantum theme, and native KWin plugins are already
+installed. Full dependency provisioning is still unfinished.
 
 **There is no dry-run or transactional snapshot/rollback implementation yet.**
 `apply-live` does not accept a `--dry-run` flag. Existing backups are component
@@ -57,7 +58,9 @@ normal routing rules. The installer does not overwrite other shortcut bindings.
 The popup keeps its original desktop owner to avoid Plasma 6.7's embedded-widget
 configuration migration bug. The display reconciler supplies the primary
 connector, which the popup resolves on each opening; it does not assume Qt's
-screen order matches KDE's output priority on Wayland.
+screen order matches KDE's output priority on Wayland. An existing host can be
+retargeted while Plasma is still assigning desktops to screens; only creating a
+new host requires an available primary desktop in the current activity.
 
 To install or reapply only the launcher:
 
@@ -77,15 +80,17 @@ The tracked package is `plasma/applets/com.arasaka.launcher`, with entry point
 `contents/ui/main.qml`. It is copied only to
 `${XDG_DATA_HOME:-$HOME/.local/share}/plasma/plasmoids/com.arasaka.launcher`.
 The command also stages `reconcile-displays`, `arasaka_topology.py`, `layout.js`,
-and the currently required `Arasaka.json` in
+`shader-wallpaper.js`, and the currently required `Arasaka.json` in
 `$HOME/.local/libexec/arasaka-kde/`. It runs the display reconciler with `--force`,
 retrying failures for up to roughly ten seconds, and independently checks live
 host readiness and managed-panel removal. Failure is reported, not treated as
 successful installation. This is not the full `apply-live`: it does not install
 themes, change window effects or application settings, or generate wallpapers.
 Layout and display-priority reconciliation still run, but wallpaper and desktop
-icon settings are preserved. Only full-theme deployment opts into the legacy
-wallpaper policy with `reconcile-displays --force --wallpapers`.
+icon settings are preserved. Full-theme deployment and its automatic display
+watcher opt into `--hide-desktop-icons --ensure-shader-wallpaper`: icons are
+hidden, and active desktops not yet using the shader plugin receive Heartfelt
+No Heart defaults. Existing shader selections and settings are preserved.
 
 Before replacement, the command prints a unique backup path under
 `${XDG_STATE_HOME:-$HOME/.local/state}/arasaka-kde/backups/launcher-*`.
@@ -121,7 +126,7 @@ before the unwanted change, not a later retry. Stop
 while Plasma is not running). Restore the two saved configuration files to the
 configuration directory and replace the affected package and runtime with their
 snapshots. If a snapshot is absent, that source did not exist: remove only the
-newly installed launcher package or the four runtime files, leaving unrelated
+newly installed launcher package or the five runtime files, leaving unrelated
 runtime files alone. After restoring, remove the corresponding
 `arasaka-kde/launcher-restart.json` marker from the state directory. Start Plasma
 again and resume the watcher only if it was active before. Do not overwrite
@@ -207,6 +212,21 @@ All existing desktops use 30 FPS, full resolution, 75% shader playback speed, an
 pause for maximized/fullscreen windows on their respective screen. Mouse and
 audio capture, window-reactive shader input, playlists, and buffer passes are
 disabled. Only texture channel 0 is enabled.
+
+This is the only managed desktop wallpaper implementation. `apply-live` calls
+`apply-shader-wallpaper` once to build, back up, install, and activate the same
+Heartfelt No Heart defaults, including rendering the PNGs used by the shader and
+static lock screen. A shader installation/activation failure stops deployment
+rather than selecting another wallpaper.
+
+Launcher-only application leaves wallpaper selections alone. The full-theme
+display watcher initializes active non-shader desktops automatically, including
+newly created or reconnected desktops, while preserving existing Tokyo, Dusti,
+Heartfelt, or custom shader settings. It checks coverage of every enabled output
+before recording success and retries if Plasma has not created a desktop yet.
+This lightweight step uses installed assets, without rebuilding the plugin or
+restarting Plasma. Full-theme or standalone shader reapplication still selects
+Heartfelt No Heart again without discarding the gallery.
 
 ```sh
 ./bin/apply-shader-wallpaper --install-only
@@ -316,8 +336,10 @@ package/artwork from the backup preceding the unwanted change, then start Plasma
 Restore runtime policy only when undoing a separate integration change; this
 scoped installer backs it up but does not modify it. A snapshot's absence means
 that source did not exist before installation. Preserve unrelated artwork and
-runtime files. Full deployment and display reconciliation own persistent layout
-policy separately from this scoped installer.
+runtime files. Full deployment delegates shader installation and explicit resets
+to this command; display reconciliation handles layout/display priority, opt-in
+desktop-icon hiding, and shader initialization on non-shader desktops. Keep the
+paired runtime scripts together unless explicitly reverting that policy.
 
 The opt-in GPU check can isolate the blur's edge response, verify that alternate
 lightning bursts are absent and retained flashes are unchanged, and capture
@@ -352,4 +374,5 @@ make apply
 make rollback SNAPSHOT=<snapshot-id>
 ```
 
-See `docs/superpowers/specs/2026-09-04-arasaka-kde-rice-design.md` for the approved design and `docs/superpowers/plans/2026-09-04-arasaka-kde-rice.md` for the implementation plan.
+See `docs/superpowers/specs/2026-09-04-arasaka-kde-rice-design.md` for the design and
+`docs/superpowers/plans/2026-09-04-arasaka-kde-rice.md` for the implementation plan.

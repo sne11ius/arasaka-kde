@@ -90,6 +90,7 @@ def main():
         "reconcile-displays": repo / "bin/reconcile-displays",
         "arasaka_topology.py": repo / "lib/arasaka_topology.py",
         "layout.js": repo / "plasma/layout.js",
+        "shader-wallpaper.js": repo / "plasma/shader-wallpaper.js",
         "Arasaka.json": repo / "theme/panel-colorizer/Arasaka.json",
     }
     for tool in ("kpackagetool6", "qdbus6", "systemctl", "kscreen-doctor", "bash",

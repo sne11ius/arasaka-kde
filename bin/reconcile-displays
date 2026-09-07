@@ -5,18 +5,21 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 if [[ -f $script_dir/arasaka_topology.py ]]; then
   engine=$script_dir/arasaka_topology.py
   layout=$script_dir/layout.js
+  shader_layout=$script_dir/shader-wallpaper.js
   colorizer_settings=$script_dir/Arasaka.json
 else
   repo_root=$(cd -- "$script_dir/.." && pwd)
   engine=$repo_root/lib/arasaka_topology.py
   layout=$repo_root/plasma/layout.js
+  shader_layout=$repo_root/plasma/shader-wallpaper.js
   colorizer_settings=$repo_root/theme/panel-colorizer/Arasaka.json
 fi
 state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/arasaka-kde
 state_file=$state_dir/topology
 force=false
 dry_run=false
-apply_wallpapers=false
+hide_desktop_icons=false
+ensure_shader_wallpaper=false
 json_file=
 while (($#)); do
   case $1 in
@@ -26,8 +29,11 @@ while (($#)); do
     --dry-run)
       dry_run=true
       ;;
-    --wallpapers)
-      apply_wallpapers=true
+    --hide-desktop-icons)
+      hide_desktop_icons=true
+      ;;
+    --ensure-shader-wallpaper)
+      ensure_shader_wallpaper=true
       ;;
     --json)
       [[ $# -ge 2 ]] || { printf 'error: --json requires a file\n' >&2; exit 2; }
@@ -78,8 +84,19 @@ while IFS=$'\t' read -r connector priority; do
   kscreen-doctor "output.${connector}.priority.${priority}" >/dev/null
 done < <(jq -r '.changes[] | @tsv' <<<"$plan_json")
 
-if ! $force && ! $topology_changed; then
+if ! $force && ! $topology_changed && ! $hide_desktop_icons && ! $ensure_shader_wallpaper; then
   exit 0
+fi
+
+if $ensure_shader_wallpaper; then
+  data_home=${XDG_DATA_HOME:-$HOME/.local/share}
+  for asset in "$shader_layout" \
+    "$data_home/plasma/wallpapers/online.knowmad.shaderwallpaper/contents/ui/shaderwallpaper/libshaderwallpaperplugin.so" \
+    "$data_home/wallpapers/Arasaka/shaders/Heartfelt_No_Heart.frag" \
+    "$data_home/wallpapers/Arasaka/mikoshi-16x9.png" \
+    "$data_home/wallpapers/Arasaka/mikoshi-16x10.png"; do
+    [[ -r $asset && -s $asset ]] || { printf 'error: required shader asset missing: %s\n' "$asset" >&2; exit 1; }
+  done
 fi
 
 for _ in {1..20}; do
@@ -97,11 +114,30 @@ shell_owner=$(qdbus6 org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.
 colorizer=$(jq -c . "$colorizer_settings")
 script=$(<"$layout")
 script=${script//__LAUNCHER_SESSION__/$bus_id\/$shell_owner}
-script=${script//__APPLY_WALLPAPERS__/$apply_wallpapers}
+script=${script//__HIDE_DESKTOP_ICONS__/$hide_desktop_icons}
 script=${script//__PRIMARY_CONNECTOR__/$primary}
 script=${script//__INTERNAL_CONNECTOR__/$internal}
-script=${script//__HOME__/$HOME}
 script=${script/__COLORIZER_SETTINGS__/$colorizer}
 
-qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$script"
+if $ensure_shader_wallpaper; then
+  # Desktops can appear after the output configuration was saved. Check every
+  # enabled connector on each event, even when the topology signature is unchanged.
+  shader_script=$(<"$shader_layout")
+  shader_script=${shader_script/__DATA_HOME_JSON__/"$(jq -cn --arg value "$data_home" '$value')"}
+  shader_script=${shader_script/__PRIMARY_CONNECTOR_JSON__/"$(jq -cn --arg value "$primary" '$value')"}
+  shader_script=${shader_script/__ENABLED_CONNECTORS_JSON__/"$(jq -c '.signature | fromjson | .enabled' <<<"$plan_json")"}
+  shader_script=${shader_script/__ENSURE_ONLY__/true}
+  # One synchronous evaluation prevents a desktop appearing between icon hiding
+  # and wallpaper coverage checks. Retarget the launcher even if coverage fails.
+  report=$(qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$script"$'\n'"$shader_script")
+  [[ $report == ARASAKA_SHADER_WALLPAPER=* ]] &&
+    jq -e '.status == "ok" and (.desktops | length > 0) and
+      all(.desktops[]; .wallpaperPlugin == "online.knowmad.shaderwallpaper")' \
+      <<<"${report#ARASAKA_SHADER_WALLPAPER=}" >/dev/null || {
+        printf 'error: shader wallpaper verification failed: %s\n' "$report" >&2
+        exit 1
+      }
+else
+  qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$script"
+fi
 printf '%s\n' "$signature" > "$state_file"

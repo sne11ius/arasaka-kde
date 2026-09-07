@@ -16,7 +16,8 @@ mkdir -p "$runtime"
 cp "$RECONCILER" "$runtime/reconcile-displays"
 cp "$REPO_ROOT/lib/arasaka_topology.py" "$runtime/arasaka_topology.py"
 cp "$REPO_ROOT/theme/panel-colorizer/Arasaka.json" "$runtime/Arasaka.json"
-printf 'var launcherSession = "__LAUNCHER_SESSION__";\nvar applyWallpapers = __APPLY_WALLPAPERS__;\n' >"$runtime/layout.js"
+cp "$REPO_ROOT/plasma/shader-wallpaper.js" "$runtime/shader-wallpaper.js"
+printf 'var launcherSession = "__LAUNCHER_SESSION__";\nvar hideDesktopIcons = __HIDE_DESKTOP_ICONS__;\n' >"$runtime/layout.js"
 RECONCILER="$runtime/reconcile-displays"
 
 fake_bin="$TEST_TMPDIR/bin"
@@ -55,7 +56,7 @@ jq '(.outputs[] | select(.name == "eDP-1") | .priority) = 2 |
     "$TEST_DIR/fixtures/topology/internal-external.json" >"$corrected_json"
 priority_marker="$TEST_TMPDIR/priority-corrected"
 printf '#!/usr/bin/env bash\nprintf "kscreen-doctor %%s\\n" "$*" >>"$ARASAKA_COMMAND_LOG"\nif [[ ${1:-} == --json ]]; then\n  if [[ -e $ARASAKA_PRIORITY_MARKER ]]; then\n    command cat "$ARASAKA_CORRECTED_JSON"\n  else\n    command cat "$ARASAKA_KSCREEN_JSON"\n  fi\n  exit 0\nfi\nif [[ $* == output.DP-1.priority.1 ]]; then\n  : >"$ARASAKA_PRIORITY_MARKER"\n  exit 0\nfi\nexit 92\n' >"$fake_bin/kscreen-doctor"
-printf '#!/usr/bin/env bash\nprintf "qdbus6 %%s\\n" "$*" >>"$ARASAKA_QDBUS_LOG"\ncase ${3:-} in\n  org.freedesktop.DBus.GetId) printf "test-bus\\n" ;;\n  org.freedesktop.DBus.GetNameOwner) printf "%%s\\n" "${ARASAKA_SHELL_OWNER-:1.42}" ;;\nesac\n' >"$fake_bin/qdbus6"
+printf '#!/usr/bin/env bash\nprintf "qdbus6 %%s\\n" "$*" >>"$ARASAKA_QDBUS_LOG"\ncase ${3:-} in\n  org.freedesktop.DBus.GetId) printf "test-bus\\n" ;;\n  org.freedesktop.DBus.GetNameOwner) printf "%%s\\n" "${ARASAKA_SHELL_OWNER-:1.42}" ;;\nesac\nif [[ $* == *ARASAKA_SHADER_WALLPAPER=* ]]; then\n  if [[ -n ${ARASAKA_BAD_SHADER_REPORT:-} ]]; then printf "Error: missing secondary desktop\\n"; else printf '\''ARASAKA_SHADER_WALLPAPER={"status":"ok","desktops":[{"screen":0,"wallpaperPlugin":"online.knowmad.shaderwallpaper"},{"screen":1,"wallpaperPlugin":"online.knowmad.shaderwallpaper"}]}\\n'\''; fi\nfi\n' >"$fake_bin/qdbus6"
 chmod +x "$fake_bin/kscreen-doctor" "$fake_bin/qdbus6"
 export ARASAKA_KSCREEN_JSON="$TEST_DIR/fixtures/topology/internal-external.json"
 export ARASAKA_CORRECTED_JSON="$corrected_json"
@@ -72,21 +73,47 @@ assert_eq '{"enabled":["DP-1","eDP-1"],"internal":"eDP-1","primary":"DP-1"}' "${
 first_qdbus_log=$(<"$ARASAKA_QDBUS_LOG")
 [[ "$first_qdbus_log" == *'org.kde.PlasmaShell.evaluateScript'* ]] || fail "changed topology should evaluate the Plasma layout"
 [[ "$first_qdbus_log" == *'var launcherSession = "test-bus/:1.42";'* ]] || fail "layout should receive the current bus/shell token"
-[[ "$first_qdbus_log" == *'var applyWallpapers = false;'* ]] || fail "standalone reconciliation should leave wallpapers and icons alone"
+[[ "$first_qdbus_log" == *'var hideDesktopIcons = false;'* ]] || fail "standalone reconciliation should leave icons alone"
+[[ "$first_qdbus_log" != *'ARASAKA_SHADER_WALLPAPER='* ]] || fail "standalone reconciliation should leave wallpapers alone"
 
 PATH="$fake_bin:$PATH" "$RECONCILER"
 assert_eq $'kscreen-doctor --json\nkscreen-doctor output.DP-1.priority.1\nkscreen-doctor --json' "$(<"$command_log")" "unchanged corrected topology should only be queried"
 assert_eq "$first_qdbus_log" "$(<"$ARASAKA_QDBUS_LOG")" "unchanged topology should not evaluate the Plasma layout again"
 
 : >"$ARASAKA_QDBUS_LOG"
-PATH="$fake_bin:$PATH" ARASAKA_SHELL_OWNER=:1.99 "$RECONCILER" --force --wallpapers
+PATH="$fake_bin:$PATH" ARASAKA_SHELL_OWNER=:1.99 "$RECONCILER" --force --hide-desktop-icons
 forced_log=$(<"$ARASAKA_QDBUS_LOG")
 [[ "$forced_log" == *'var launcherSession = "test-bus/:1.99";'* ]] || fail "forced application should obtain a fresh shell token"
-[[ "$forced_log" == *'var applyWallpapers = true;'* ]] || fail "--wallpapers should opt into wallpaper/icon changes"
+[[ "$forced_log" == *'var hideDesktopIcons = true;'* ]] || fail "--hide-desktop-icons should opt into icon changes"
+
+artwork="$HOME/.local/share/wallpapers/Arasaka"
+plugin="$HOME/.local/share/plasma/wallpapers/online.knowmad.shaderwallpaper"
+mkdir -p "$artwork/shaders" "$plugin/contents/ui/shaderwallpaper"
+printf 'fixture\n' >"$artwork/shaders/Heartfelt_No_Heart.frag"
+printf 'fixture\n' >"$artwork/mikoshi-16x9.png"
+printf 'fixture\n' >"$artwork/mikoshi-16x10.png"
+printf 'fixture\n' >"$plugin/contents/ui/shaderwallpaper/libshaderwallpaperplugin.so"
+for _ in 1 2; do
+    : >"$ARASAKA_QDBUS_LOG"
+    PATH="$fake_bin:$PATH" "$RECONCILER" --ensure-shader-wallpaper --hide-desktop-icons
+    shader_log=$(<"$ARASAKA_QDBUS_LOG")
+    [[ "$shader_log" == *'var ensureOnly = "true" === "true";'* ]] || fail "shader reconciliation should preserve existing shader selections"
+    [[ "$shader_log" == *'var expectedConnectors = ["DP-1","eDP-1"];'* ]] || fail "shader reconciliation should cover all enabled outputs"
+    [[ "$shader_log" == *'var hideDesktopIcons = true;'* ]] || fail "unchanged topology must still hide icons on new desktops"
+    remaining_calls=${shader_log#*org.kde.PlasmaShell.evaluateScript}
+    [[ "$remaining_calls" != *'org.kde.PlasmaShell.evaluateScript'* ]] || fail "icon policy and shader coverage must share one synchronous evaluation"
+    [[ "$shader_log" != *'__DATA_HOME_JSON__'* ]] || fail "shader data home should be rendered"
+done
+printf 'previous-signature\n' >"$HOME/.local/state/arasaka-kde/topology"
+if PATH="$fake_bin:$PATH" ARASAKA_BAD_SHADER_REPORT=1 "$RECONCILER" --ensure-shader-wallpaper >"$TEST_TMPDIR/error" 2>&1; then
+    fail "invalid shader verification must fail reconciliation"
+fi
+assert_eq 'previous-signature' "$(<"$HOME/.local/state/arasaka-kde/topology")" "shader failure must not stamp topology success"
+printf '%s\n' "$state" >"$HOME/.local/state/arasaka-kde/topology"
 
 : >"$ARASAKA_QDBUS_LOG"
 : >"$command_log"
-PATH="$fake_bin:$PATH" "$RECONCILER" --dry-run --force --wallpapers \
+PATH="$fake_bin:$PATH" "$RECONCILER" --dry-run --force --hide-desktop-icons --ensure-shader-wallpaper \
     --json "$TEST_DIR/fixtures/topology/internal-external.json" >/dev/null
 assert_eq '' "$(<"$ARASAKA_QDBUS_LOG")" "dry-run with apply flags should remain offline"
 assert_eq '' "$(<"$command_log")" "fixture dry-run should not query KScreen"

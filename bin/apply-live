@@ -110,15 +110,7 @@ if [[ -f $HOME/.zshrc ]] && ! grep -Fq '/arasaka-kde/arasaka-p10k.zsh' "$HOME/.z
   printf '\n%s\n' '[[ ! -f "$HOME/.local/share/arasaka-kde/arasaka-p10k.zsh" ]] || source "$HOME/.local/share/arasaka-kde/arasaka-p10k.zsh"' >>"$HOME/.zshrc"
 fi
 
-rsvg-convert -w 1920 -h 1080 "$repo_root/assets/wallpapers/mikoshi-16x9.svg" -o "$data_home/wallpapers/Arasaka/mikoshi-16x9.png"
-rsvg-convert -w 1600 -h 1000 "$repo_root/assets/wallpapers/mikoshi-16x10.svg" -o "$data_home/wallpapers/Arasaka/mikoshi-16x10.png"
-
-ffmpeg -hide_banner -loglevel error -y -loop 1 -i "$data_home/wallpapers/Arasaka/mikoshi-16x9.png" -t 12 -r 24 \
-  -vf "zoompan=z='1.004+0.004*sin(2*PI*on/288)':d=1:s=1920x1080:fps=24,drawbox=x=0:y='(ih-3)*(0.5+0.5*sin(2*PI*t/12))':w=iw:h=3:color=0xe60012@0.34:t=fill,format=yuv420p" \
-  -c:v libx264 -preset medium -crf 21 -movflags +faststart "$data_home/wallpapers/Arasaka/mikoshi-16x9.mp4"
-ffmpeg -hide_banner -loglevel error -y -loop 1 -i "$data_home/wallpapers/Arasaka/mikoshi-16x10.png" -t 12 -r 24 \
-  -vf "zoompan=z='1.004+0.004*sin(2*PI*on/288)':d=1:s=1600x1000:fps=24,drawbox=x=0:y='(ih-3)*(0.5+0.5*sin(2*PI*t/12))':w=iw:h=3:color=0xe60012@0.34:t=fill,format=yuv420p" \
-  -c:v libx264 -preset medium -crf 21 -movflags +faststart "$data_home/wallpapers/Arasaka/mikoshi-16x10.mp4"
+"$repo_root/bin/apply-shader-wallpaper"
 
 plasma-apply-colorscheme Arasaka
 plasma-apply-desktoptheme com.arasaka.mikoshi
@@ -247,7 +239,7 @@ qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript arasaka-tile-
 rm -f "$tile_padding_script"
 "$repo_root/bin/apply-window-effects"
 "$repo_root/bin/apply-launcher"
-"$HOME/.local/libexec/arasaka-kde/reconcile-displays" --force --wallpapers
+"$HOME/.local/libexec/arasaka-kde/reconcile-displays" --force --hide-desktop-icons --ensure-shader-wallpaper
 systemctl --user enable --now arasaka-display-reconcile.path
 path_disabled=false
 trap - EXIT

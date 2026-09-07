@@ -1,6 +1,8 @@
 // Wallpaper-only application: do not create desktops, panels, or change display topology.
 var dataHome = __DATA_HOME_JSON__;
 var primaryConnector = __PRIMARY_CONNECTOR_JSON__;
+var ensureOnly = "__ENSURE_ONLY__" === "true";
+var expectedConnectors = __ENABLED_CONNECTORS_JSON__;
 var plugin = "online.knowmad.shaderwallpaper";
 var primaryScreen = screenForConnector(primaryConnector);
 // Plasma retains disconnected/inactive containments with screen -1.
@@ -10,6 +12,13 @@ if (primaryScreen < 0 || targets.length === 0 ||
         !targets.some(function (desktop) { return desktop.screen === primaryScreen; })) {
     throw new Error("Expected existing desktops with valid screens, including primary connector " + primaryConnector);
 }
+expectedConnectors.forEach(function (connector) {
+    var screen = screenForConnector(connector);
+    if (!Number.isInteger(screen) || screen < 0 ||
+            !targets.some(function (desktop) { return desktop.screen === screen; })) {
+        throw new Error("Expected existing desktop for enabled connector " + connector);
+    }
+});
 
 function fileUrl(path) {
     return "file://" + path.split("/").map(function (part) {
@@ -21,6 +30,10 @@ function fileUrl(path) {
 
 var report = {status: "ok", primaryScreen: primaryScreen, desktops: []};
 targets.forEach(function (desktop) {
+    if (ensureOnly && desktop.wallpaperPlugin === plugin) {
+        report.desktops.push({id: desktop.id, screen: desktop.screen, wallpaperPlugin: desktop.wallpaperPlugin, preserved: true});
+        return;
+    }
     var image = desktop.screen === primaryScreen ? "mikoshi-16x9.png" : "mikoshi-16x10.png";
     var settings = {
         selectedShaderPath: fileUrl(dataHome + "/wallpapers/Arasaka/shaders/Heartfelt_No_Heart.frag"),
@@ -60,7 +73,6 @@ targets.forEach(function (desktop) {
     Object.keys(settings).forEach(function (key) {
         desktop.writeConfig(key, settings[key]);
     });
-    desktop.wallpaperPlugin = plugin;
     var actual = {};
     Object.keys(settings).forEach(function (key) {
         // KConfig uses the fallback's type; a differing fallback also detects missing writes.
@@ -74,6 +86,8 @@ targets.forEach(function (desktop) {
             throw new Error("Wallpaper configuration mismatch on desktop " + desktop.id + ": " + key);
         }
     });
+    // Failed initialization must remain retryable, not look like a custom shader.
+    desktop.wallpaperPlugin = plugin;
     if (desktop.wallpaperPlugin !== plugin) {
         throw new Error("Wallpaper plugin mismatch on desktop " + desktop.id);
     }

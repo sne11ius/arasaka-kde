@@ -111,7 +111,8 @@ class ApplyLauncherTest(unittest.TestCase):
         self.write(self.repo / "lib/arasaka_topology.py", (ROOT / "lib/arasaka_topology.py").read_text())
         self.write(self.repo / "plasma/layout.js",
                    'var launcherSession = "__LAUNCHER_SESSION__";\n'
-                   'var applyWallpapers = __APPLY_WALLPAPERS__;\n')
+                   'var hideDesktopIcons = __HIDE_DESKTOP_ICONS__;\n')
+        self.write(self.repo / "plasma/shader-wallpaper.js", (ROOT / "plasma/shader-wallpaper.js").read_text())
         self.write(self.repo / "theme/panel-colorizer/Arasaka.json", '{"fixture": true}\n')
         self.source_package = self.repo / "plasma/applets" / PLUGIN
         self.write(self.source_package / "metadata.json", json.dumps({
@@ -182,7 +183,9 @@ with patch("time.monotonic", clock), patch("time.sleep", advance):
         for source, target in (("bin/reconcile-displays", "reconcile-displays"),
                                ("lib/arasaka_topology.py", "arasaka_topology.py"),
                                ("plasma/layout.js", "layout.js"),
+                               ("plasma/shader-wallpaper.js", "shader-wallpaper.js"),
                                ("theme/panel-colorizer/Arasaka.json", "Arasaka.json")):
+            self.assertTrue((self.runtime / target).is_file(), target)
             self.assertEqual((self.repo / source).read_bytes(), (self.runtime / target).read_bytes())
         self.assertEqual((self.runtime / "unrelated").read_text(), "keep me\n")
         self.assertFalse((self.data / "wallpapers").exists())
@@ -312,7 +315,7 @@ with patch("time.monotonic", clock), patch("time.sleep", advance):
                    and "arasaka-launcher-status" not in c[-1]]
         self.assertEqual(len(layouts), 1)
         self.assertIn('"new-bus/:1.99"', layouts[0])
-        self.assertIn('var applyWallpapers = false;', layouts[0])
+        self.assertIn('var hideDesktopIcons = false;', layouts[0])
 
     def test_apply_live_explicitly_reconciles_wallpapers_after_launcher(self):
         # Run the layout-application section without executing unrelated theme installers.
@@ -327,7 +330,8 @@ with patch("time.monotonic", clock), patch("time.sleep", advance):
                                  "apply-live-test", str(self.repo)],
                                 env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.session / "order").read_text(), "launcher\nreconcile --force --wallpapers\n")
+        self.assertEqual((self.session / "order").read_text(),
+                         "launcher\nreconcile --force --hide-desktop-icons --ensure-shader-wallpaper\n")
 
     def test_final_timeout_does_not_hide_observed_readiness_failure(self):
         result = self.run_installer(NEVER_READY="1", STALL_AFTER_FIRST_ATTEMPT="1", clock_step=9.99)

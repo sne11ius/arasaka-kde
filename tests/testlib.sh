@@ -21,7 +21,7 @@ setup_temp_home() {
     TEST_TMPDIR=$(mktemp -d)
     export TEST_TMPDIR
     export HOME="$TEST_TMPDIR/home"
-    unset XDG_STATE_HOME XDG_CACHE_HOME
+    unset XDG_STATE_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_CONFIG_HOME
     mkdir -p "$HOME"
     trap 'rm -rf -- "$TEST_TMPDIR"' EXIT
 }

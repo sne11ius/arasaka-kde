@@ -22,18 +22,27 @@ PLASMA = r"""
 const fs = require('fs');
 const vm = require('vm');
 const state = JSON.parse(fs.readFileSync(process.env.DESKTOP_STATE, 'utf8'));
+const mutations = [];
 const context = {
     desktops: () => state.map(d => ({
         id: d.id, screen: d.screen,
         get wallpaperPlugin() { return d.wallpaperPlugin; },
         set wallpaperPlugin(value) {
-            if (process.env.CHECK_PRIVACY && (d.config.audioEnabled || d.config.mouseEnabled || d.config.playlistEnabled)) {
+            mutations.push({id: d.id, operation: 'wallpaperPlugin', value});
+            if (process.env.CHECK_PRIVACY && (d.config.audioEnabled || d.config.mouseEnabled ||
+                    d.config.windowsEnabled || d.config.playlistEnabled)) {
                 throw Error('capture/playlist enabled when loading wallpaper');
             }
             d.wallpaperPlugin = value;
         },
-        currentConfigGroup: [],
+        configGroup: [],
+        get currentConfigGroup() { return this.configGroup; },
+        set currentConfigGroup(value) {
+            mutations.push({id: d.id, operation: 'currentConfigGroup', value});
+            this.configGroup = value;
+        },
         writeConfig(key, value) {
+            mutations.push({id: d.id, operation: 'writeConfig', key, value});
             if (JSON.stringify(this.currentConfigGroup) !==
                 JSON.stringify(['Wallpaper', 'online.knowmad.shaderwallpaper', 'General'])) {
                 throw Error('unexpected configuration group');
@@ -46,13 +55,128 @@ const context = {
             return fallback === undefined || typeof fallback === 'string' ? String(d.config[key]) : d.config[key];
         }
     })),
-    screenForConnector: connector => connector === 'HDMI-A-1' ? 1 : -1,
+    screenForConnector: connector => ({'eDP-1': 0, 'HDMI-A-1': 1, 'DP-1': 2}[connector] ?? -1),
     print: value => console.log(value)
 };
 try { vm.runInNewContext(process.argv[1], context); }
 catch (error) { console.log('Error: ' + error.message); }
 fs.writeFileSync(process.env.DESKTOP_STATE, JSON.stringify(state));
+if (process.env.MUTATION_LOG) fs.writeFileSync(process.env.MUTATION_LOG, JSON.stringify(mutations));
 """
+
+
+class ShaderWallpaperScriptTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="shader-script-test-", dir="/tmp/opencode")
+        self.addCleanup(temporary.cleanup)
+        self.base = Path(temporary.name)
+        self.data = self.base / 'data "quoted" \\ space#%?'
+        self.desktops = [
+            {"id": 12, "screen": 0, "wallpaperPlugin": PLUGIN, "config": {
+                "selectedShaderPath": "file:///custom.frag", "selectedShaderCode": "custom shader code",
+                "targetFps": 144, "shaderSpeed": 1.5, "running": False, "audioEnabled": True,
+                "mouseEnabled": True, "windowsEnabled": True, "playlistEnabled": True,
+                "commonCode": "custom common code", "useBufferA": True, "customSetting": [1, "keep"],
+            }},
+            {"id": 27, "screen": 1, "wallpaperPlugin": "org.kde.image", "config": {
+                "audioEnabled": True, "mouseEnabled": True, "windowsEnabled": True, "playlistEnabled": True,
+            }},
+            {"id": 42, "screen": 2, "wallpaperPlugin": "org.kde.image", "config": {}},
+        ]
+
+    def run_template(self, desktops, ensure_only=True, connectors=("eDP-1", "HDMI-A-1", "DP-1"), **env):
+        script = (ROOT / "plasma/shader-wallpaper.js").read_text()
+        for key, value in {"DATA_HOME": str(self.data), "PRIMARY_CONNECTOR": "HDMI-A-1",
+                           "ENABLED_CONNECTORS": connectors}.items():
+            script = script.replace(f"__{key}_JSON__", json.dumps(value))
+        if ensure_only is not None:
+            script = script.replace("__ENSURE_ONLY__", json.dumps(ensure_only))
+        state = self.base / "desktops.json"
+        mutations = self.base / "mutations.json"
+        state.write_text(json.dumps(desktops))
+        environment = dict(os.environ, DESKTOP_STATE=str(state), MUTATION_LOG=str(mutations))
+        for name in ("CHECK_PRIVACY", "REJECT_SETTING"):
+            environment.pop(name, None)
+        result = subprocess.run(["node", "-e", PLASMA, script], env=dict(environment, **env),
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        return result.stdout.strip(), json.loads(state.read_text()), json.loads(mutations.read_text())
+
+    def test_ensure_initializes_three_active_screens_but_preserves_custom_shader_and_parked_desktop(self):
+        parked = {"id": 99, "screen": -1, "wallpaperPlugin": "org.kde.image", "config": {"keep": True}}
+        output, desktops, mutations = self.run_template([*self.desktops, parked], CHECK_PRIVACY="1")
+        self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
+        self.assertEqual(desktops[0], self.desktops[0])
+        self.assertEqual(desktops[3], parked)
+        self.assertEqual({mutation["id"] for mutation in mutations}, {27, 42})
+        report = json.loads(output.removeprefix("ARASAKA_SHADER_WALLPAPER="))
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(report["primaryScreen"], 1)
+        self.assertEqual(report["desktops"][0], {
+            "id": 12, "screen": 0, "wallpaperPlugin": PLUGIN, "preserved": True,
+        })
+        self.assertEqual(len(report["desktops"]), 3)
+        for desktop, image, entry in zip(desktops[1:3], ("mikoshi-16x9.png", "mikoshi-16x10.png"),
+                                         report["desktops"][1:]):
+            self.assertEqual(desktop["wallpaperPlugin"], PLUGIN)
+            for key, value in {
+                "selectedShaderPath": (self.data / "wallpapers/Arasaka/shaders" / SHADER).as_uri(),
+                "selectedShaderCode": "", "running": True, "shaderSpeed": 0.75, "targetFps": 30,
+                "iChannel0": (self.data / "wallpapers/Arasaka" / image).as_uri(),
+                "mouseEnabled": False, "audioEnabled": False, "windowsEnabled": False, "playlistEnabled": False,
+            }.items():
+                self.assertEqual(desktop["config"][key], value, key)
+                self.assertEqual(entry["config"][key], value, key)
+
+    def test_ensure_is_idempotent_with_an_all_preserved_report_and_no_writes(self):
+        output, desktops, _ = self.run_template(self.desktops)
+        self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
+        output, repeated, mutations = self.run_template(desktops)
+        self.assertEqual(mutations, [])
+        self.assertEqual(repeated, desktops)
+        self.assertEqual(json.loads(output.removeprefix("ARASAKA_SHADER_WALLPAPER=")), {
+            "status": "ok", "primaryScreen": 1, "desktops": [
+                {"id": 12, "screen": 0, "wallpaperPlugin": PLUGIN, "preserved": True},
+                {"id": 27, "screen": 1, "wallpaperPlugin": PLUGIN, "preserved": True},
+                {"id": 42, "screen": 2, "wallpaperPlugin": PLUGIN, "preserved": True},
+            ],
+        })
+
+    def test_missing_secondary_coverage_fails_before_any_writes_in_both_modes(self):
+        for ensure_only in (True, False):
+            for connector in ("DP-1", "unmapped"):
+                with self.subTest(ensure_only=ensure_only, connector=connector):
+                    parked = dict(self.desktops[2], screen=-1)
+                    initial = [*self.desktops[:2], parked]
+                    output, desktops, mutations = self.run_template(
+                        initial, ensure_only=ensure_only, connectors=("eDP-1", "HDMI-A-1", connector))
+                    self.assertTrue(output.startswith("Error:"), output)
+                    self.assertIn(connector, output)
+                    self.assertEqual(mutations, [])
+                    self.assertEqual(desktops, initial)
+
+    def test_explicit_and_unrendered_modes_reset_existing_shader_settings(self):
+        for ensure_only in (False, None):
+            with self.subTest(ensure_only=ensure_only):
+                output, desktops, mutations = self.run_template(self.desktops, ensure_only=ensure_only)
+                self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
+                self.assertEqual({mutation["id"] for mutation in mutations}, {12, 27, 42})
+                self.assertEqual(desktops[0]["config"]["selectedShaderPath"],
+                                 (self.data / "wallpapers/Arasaka/shaders" / SHADER).as_uri())
+                self.assertEqual(desktops[0]["config"]["selectedShaderCode"], "")
+                self.assertEqual(desktops[0]["config"]["targetFps"], 30)
+
+    def test_ensure_keeps_readback_checks_for_initialized_desktops(self):
+        desktops = self.desktops
+        for _ in range(2):
+            output, desktops, _ = self.run_template(desktops, REJECT_SETTING="targetFps")
+            self.assertTrue(output.startswith("Error:"), output)
+            self.assertIn("desktop 27: targetFps", output)
+            self.assertEqual(desktops[1]["wallpaperPlugin"], "org.kde.image")
+        output, desktops, _ = self.run_template(desktops)
+        self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
+        self.assertEqual(desktops[1]["config"]["targetFps"], 30)
+        self.assertEqual(desktops[1]["wallpaperPlugin"], PLUGIN)
 
 
 class ApplyShaderWallpaperTests(unittest.TestCase):
@@ -247,6 +371,10 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
 
     def test_default_activation_configures_both_desktops_with_escaped_absolute_urls_and_backups(self):
         self.seed_previous_install()
+        self.desktops[0].update(wallpaperPlugin=PLUGIN, config={
+            "selectedShaderPath": "file:///custom.frag", "selectedShaderCode": "custom", "targetFps": 144,
+        })
+        Path(self.env["DESKTOP_STATE"]).write_text(json.dumps(self.desktops))
         result = self.run_installer()
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         desktops = json.loads(Path(self.env["DESKTOP_STATE"]).read_text())
@@ -460,12 +588,26 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         self.assert_previous_unchanged()
 
     def test_one_existing_desktop_can_activate_no_heart(self):
+        self.tool("kscreen-doctor", '''
+            assert sys.argv[1:] == ['--json'], 'display reconfiguration is forbidden'
+            print(json.dumps({'outputs': [
+                {'id': 2, 'name': 'HDMI-A-1', 'connected': True, 'enabled': True, 'priority': 1}
+            ]}))
+            ''')
         Path(self.env["DESKTOP_STATE"]).write_text(json.dumps([self.desktops[1]]))
         result = self.run_installer()
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         desktops = json.loads(Path(self.env["DESKTOP_STATE"]).read_text())
         self.assertEqual(len(desktops), 1)
         self.assertEqual(desktops[0]["config"]["selectedShaderPath"], (self.artwork / "shaders" / SHADER).as_uri())
+
+    def test_missing_enabled_secondary_desktop_fails_without_config_writes(self):
+        initial = [self.desktops[1]]
+        Path(self.env["DESKTOP_STATE"]).write_text(json.dumps(initial))
+        result = self.run_installer()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("eDP-1", result.stderr)
+        self.assertEqual(json.loads(Path(self.env["DESKTOP_STATE"]).read_text()), initial)
 
     def test_three_existing_desktops_can_activate_no_heart(self):
         third = {"id": 42, "screen": 2, "wallpaperPlugin": "org.kde.image", "config": {}}
@@ -485,12 +627,12 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         self.assertEqual(json.loads(Path(self.env["DESKTOP_STATE"]).read_text()), self.desktops)
 
     def test_parked_desktop_is_untouched_while_connected_primary_is_configured(self):
-        self.desktops[0]["screen"] = -1
-        Path(self.env["DESKTOP_STATE"]).write_text(json.dumps(self.desktops))
+        parked = {"id": 99, "screen": -1, "wallpaperPlugin": "org.kde.image", "config": {"keep": True}}
+        Path(self.env["DESKTOP_STATE"]).write_text(json.dumps([*self.desktops, parked]))
         result = self.run_installer()
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         desktops = json.loads(Path(self.env["DESKTOP_STATE"]).read_text())
-        self.assertEqual(desktops[0], self.desktops[0])
+        self.assertEqual(desktops[2], parked)
         self.assertEqual(desktops[1]["config"]["selectedShaderPath"], (self.artwork / "shaders" / SHADER).as_uri())
 
     def test_only_parked_desktops_is_not_success(self):
