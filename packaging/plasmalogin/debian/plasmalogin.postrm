@@ -1,0 +1,34 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|purge)
+        if [ -e /usr/share/debconf/confmodule ]; then
+            . /usr/share/debconf/confmodule
+            saved_seen=
+            if db_fget shared/default-x-display-manager seen; then
+                saved_seen=$RET
+            fi
+            if [ "$1" = purge ]; then
+                db_purge
+            else
+                db_unregister shared/default-x-display-manager
+            fi
+            if db_metaget shared/default-x-display-manager owners; then
+                db_subst shared/default-x-display-manager choices "$RET"
+                if [ -n "$saved_seen" ]; then
+                    db_fset shared/default-x-display-manager seen "$saved_seen"
+                fi
+            fi
+            db_stop
+        fi
+        if [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
+            systemctl --system daemon-reload
+        fi
+        ;;
+esac
+
+# Keep the account, state, runtime files and display-manager selectors intact.
+# In particular, do not run tmpfiles --remove/--purge or systemd-helper purge.
+#DEBHELPER#
+exit 0

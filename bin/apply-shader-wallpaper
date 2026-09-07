@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and deploy the pinned, user-local wallpaper without changing shell layout."""
+"""Build the pinned wallpaper for user-local deployment or system package staging."""
 
 import argparse
 from datetime import datetime
@@ -42,47 +42,74 @@ def run(*command, capture=False, input=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--install-only", action="store_true", help="install and back up; no session calls")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--install-only", action="store_true", help="install and back up; no session calls")
+    modes.add_argument("--stage-only", type=Path, metavar="DEST",
+                       help="export system files to an empty absolute directory; no user deployment or session calls")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
-    home = Path(os.environ["HOME"])
-    data = Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share")
-    config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
-    state = Path(os.environ.get("XDG_STATE_HOME") or home / ".local/state") / "arasaka-kde"
-    backups = state / "backups"
+    if args.stage_only:
+        check_path(args.stage_only, directory=True)
+        if args.stage_only.exists() and any(args.stage_only.iterdir()):
+            raise ValueError(f"staging destination must be empty: {args.stage_only}")
+        check_path(Path(__file__).absolute())
+        # Gallery URLs describe the installed tree, never DEST or a user's data home.
+        data = Path("/usr/share")
+    else:
+        home = Path(os.environ["HOME"])
+        data = Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share")
+        config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+        state = Path(os.environ.get("XDG_STATE_HOME") or home / ".local/state") / "arasaka-kde"
+        backups = state / "backups"
     package_target = data / "plasma/wallpapers" / PLUGIN
     artwork = data / "wallpapers/Arasaka"
     jobs = os.environ.get("ARASAKA_SHADER_BUILD_JOBS", "4")
     if not jobs.isdecimal() or int(jobs) < 1:
         raise ValueError("ARASAKA_SHADER_BUILD_JOBS must be a positive integer")
-    for tool in ["cmake", "rsvg-convert", "patch", "python3"] + ([] if args.install_only else ["qdbus6", "kscreen-doctor"]):
+    for tool in ["cmake", "rsvg-convert", "patch", "python3"] + ([] if args.install_only or args.stage_only else ["qdbus6", "kscreen-doctor"]):
         if not shutil.which(tool):
             raise ValueError(f"required command not found: {tool}")
 
-    # Validate every replacement and backup source before any live writes.
     images = [("mikoshi-16x9", 1920, 1080), ("mikoshi-16x10", 1600, 1000)]
-    sources = [(package_target, Path("package"), True)]
-    sources += [(artwork / f"{name}.png", Path("artwork") / f"{name}.png", False) for name, _, _ in images]
-    sources += [(artwork / "shaders" / SHADER, Path("artwork/shaders") / SHADER, False)]
-    sources += [(config / name, Path(name), False) for name in ("plasma-org.kde.plasma.desktop-appletsrc", "plasmashellrc")]
-    sources += [(home / ".local/libexec/arasaka-kde/layout.js", Path("runtime/layout.js"), False)]
-    check_path(backups, directory=True)
-    for source, _, directory in sources:
-        check_path(source, directory)
-        if directory and source.exists():
-            for child in source.rglob("*"):
-                check_path(child, child.is_dir())
+    if not args.stage_only:
+        # Validate every replacement and backup source before any live writes.
+        sources = [(package_target, Path("package"), True)]
+        sources += [(artwork / f"{name}.png", Path("artwork") / f"{name}.png", False) for name, _, _ in images]
+        sources += [(artwork / "shaders" / SHADER, Path("artwork/shaders") / SHADER, False)]
+        sources += [(config / name, Path(name), False) for name in ("plasma-org.kde.plasma.desktop-appletsrc", "plasmashellrc")]
+        sources += [(home / ".local/libexec/arasaka-kde/layout.js", Path("runtime/layout.js"), False)]
+        check_path(backups, directory=True)
+        for source, _, directory in sources:
+            check_path(source, directory)
+            if directory and source.exists():
+                for child in source.rglob("*"):
+                    check_path(child, child.is_dir())
     patch = repo / "assets/wallpapers/shaders/heartfelt-no-heart.patch"
     dusti_patch = repo / "assets/wallpapers/shaders/dusti.patch"
-    inputs = [patch, dusti_patch, repo / "plasma/shader-wallpaper.js", repo / "lib/arasaka_topology.py"]
+    inputs = [patch, dusti_patch]
+    if args.stage_only:
+        inputs += [repo / "bin/fetch-components", repo / "lib/common.sh",
+                   Path(os.environ.get("ARASAKA_COMPONENT_MANIFEST", str(repo / "manifest/components.tsv")))]
+    else:
+        inputs += [repo / "plasma/shader-wallpaper.js", repo / "lib/arasaka_topology.py"]
     inputs += [repo / "assets/wallpapers" / f"{name}.svg" for name, _, _ in images]
     for path in inputs:
+        if args.stage_only:
+            check_path(path)
         if not path.is_file() or not os.access(path, os.R_OK):
             raise ValueError(f"required readable input not found: {path}")
 
     archive = run(str(repo / "bin/fetch-components"), "shader-wallpaper", capture=True)
-    tokyo = Path(run(str(repo / "bin/fetch-components"), "shader-tokyo", capture=True)).read_bytes().decode("utf-8-sig")
-    dusti = json.loads(Path(run(str(repo / "bin/fetch-components"), "shader-dusti", capture=True)).read_bytes())["Shader"]
+    if args.stage_only:
+        check_path(Path(archive))
+    tokyo_source = Path(run(str(repo / "bin/fetch-components"), "shader-tokyo", capture=True))
+    if args.stage_only:
+        check_path(tokyo_source)
+    tokyo = tokyo_source.read_bytes().decode("utf-8-sig")
+    dusti_source = Path(run(str(repo / "bin/fetch-components"), "shader-dusti", capture=True))
+    if args.stage_only:
+        check_path(dusti_source)
+    dusti = json.loads(dusti_source.read_bytes())["Shader"]
     passes = dusti.get("renderpass", [])
     if (dusti.get("info", {}).get("id") != "tcXXDB" or len(passes) != 1
             or passes[0].get("type") != "image" or passes[0].get("name") != "Image" or passes[0].get("inputs") != []):
@@ -92,6 +119,8 @@ def main():
         raise ValueError("selectable shader source is missing its mainImage entry point")
     with tempfile.TemporaryDirectory(prefix="arasaka-shader-wallpaper-") as temporary:
         stage = Path(temporary)
+        if args.stage_only:
+            check_path(stage, directory=True)
         source_root = stage / "source"
         source_root.mkdir()
         with tarfile.open(archive, "r:gz") as tar:
@@ -102,9 +131,14 @@ def main():
         if len(roots) != 1 or not (roots[0] / "CMakeLists.txt").is_file():
             raise ValueError("source archive must contain one CMake project")
         source = roots[0]
+        if args.stage_only:
+            for path in (source, *source.rglob("*")):
+                check_path(path, path.is_dir())
         build = stage / "build"
+        # System packages use system libraries, not CMake's uninstalled RPATH padding.
         run("cmake", "-S", str(source), "-B", str(build), "-DCMAKE_BUILD_TYPE=Release",
-            f"-DCMAKE_INSTALL_PREFIX={stage / 'prefix'}")
+            f"-DCMAKE_INSTALL_PREFIX={stage / 'prefix'}",
+            *(["-DBUILD_TESTING=OFF", "-DCMAKE_SKIP_RPATH=ON"] if args.stage_only else []))
         # Upstream builds into source/package. Never run build.sh or cmake --install.
         run("cmake", "--build", str(build), "--parallel", jobs)
         package = source / "package"
@@ -128,6 +162,9 @@ def main():
         shutil.copy2(source / "LICENSE", package / "LICENSE")
         for child in package.rglob("*"):
             check_path(child, child.is_dir())
+        if args.stage_only:
+            # Qt's tooling-only directory map names the temporary source tree.
+            (native / "shaderwallpaperplugin_qml_module_dir_map.qrc").unlink(missing_ok=True)
 
         shaders = stage / "shaders"
         shaders.mkdir()
@@ -178,56 +215,57 @@ def main():
             entry.update(source="shadertoy", needsAudio=False, hasBuffers=False, favorite=False,
                          tags=["arasaka"], thumbnailPath="", likes=0, views=0)
         index["shaders"].extend(gallery)
-        old_ui = package_target / "contents/ui"
-        managed_paths = {entry["shaderPath"] for entry in gallery}
-        # Imports can include whole bundles, buffers, textures, and unindexed files.
-        for folder in ("Shaders", "Shaders6"):
-            old_folder = old_ui / folder
-            if not old_folder.exists():
-                continue
-            for path in (old_folder, *old_folder.rglob("*")):
-                relative = path.relative_to(old_ui)
-                target = ui / relative
-                if path.is_file() and str(relative) in managed_paths:
+        if not args.stage_only:
+            old_ui = package_target / "contents/ui"
+            managed_paths = {entry["shaderPath"] for entry in gallery}
+            # Imports can include whole bundles, buffers, textures, and unindexed files.
+            for folder in ("Shaders", "Shaders6"):
+                old_folder = old_ui / folder
+                if not old_folder.exists():
                     continue
-                if target.exists():
-                    if path.is_dir() and target.is_dir():
+                for path in (old_folder, *old_folder.rglob("*")):
+                    relative = path.relative_to(old_ui)
+                    target = ui / relative
+                    if path.is_file() and str(relative) in managed_paths:
                         continue
-                    if path.is_file() and target.is_file() and filecmp.cmp(path, target, shallow=False):
-                        continue
-                    raise ValueError(f"shader file collision; preserve or rename the custom file before retrying: {path}")
-                if path.is_dir():
-                    target.mkdir(parents=True, exist_ok=True)
-                else:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(path, target)
+                    if target.exists():
+                        if path.is_dir() and target.is_dir():
+                            continue
+                        if path.is_file() and target.is_file() and filecmp.cmp(path, target, shallow=False):
+                            continue
+                        raise ValueError(f"shader file collision; preserve or rename the custom file before retrying: {path}")
+                    if path.is_dir():
+                        target.mkdir(parents=True, exist_ok=True)
+                    else:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(path, target)
 
-        def shader_key(value):
-            url = urlsplit(value)
-            if url.scheme == "file" and url.netloc in ("", "localhost"):
-                value = unquote(url.path)
-            elif url.scheme:
-                return value
-            return os.path.normpath(old_ui / value)
+            def shader_key(value):
+                url = urlsplit(value)
+                if url.scheme == "file" and url.netloc in ("", "localhost"):
+                    value = unquote(url.path)
+                elif url.scheme:
+                    return value
+                return os.path.normpath(old_ui / value)
 
-        old_index = old_ui / "shader_index.json"
-        if old_index.is_file():
-            saved = json.loads(old_index.read_text(encoding="utf-8"))
-            by_path = {shader_key(entry["shaderPath"]): entry for entry in index["shaders"]}
-            for entry in saved["shaders"]:
-                key = shader_key(entry["shaderPath"])
-                if key in by_path:
-                    # Keep gallery identity/favorites, not obsolete managed source metadata.
-                    by_path[key].update({field: entry[field] for field in ("id", "favorite", "thumbnailPath") if field in entry})
-                else:
-                    index["shaders"].append(entry)
-                    by_path[key] = entry
-            for category in saved.get("categories", []):
-                if category not in index["categories"]:
-                    index["categories"].append(category)
-            ids = [entry["id"] for entry in index["shaders"]]
-            if len(set(ids)) != len(ids):
-                raise ValueError("gallery ID collision; resolve duplicate shader identities before retrying")
+            old_index = old_ui / "shader_index.json"
+            if old_index.is_file():
+                saved = json.loads(old_index.read_text(encoding="utf-8"))
+                by_path = {shader_key(entry["shaderPath"]): entry for entry in index["shaders"]}
+                for entry in saved["shaders"]:
+                    key = shader_key(entry["shaderPath"])
+                    if key in by_path:
+                        # Keep gallery identity/favorites, not obsolete managed source metadata.
+                        by_path[key].update({field: entry[field] for field in ("id", "favorite", "thumbnailPath") if field in entry})
+                    else:
+                        index["shaders"].append(entry)
+                        by_path[key] = entry
+                for category in saved.get("categories", []):
+                    if category not in index["categories"]:
+                        index["categories"].append(category)
+                ids = [entry["id"] for entry in index["shaders"]]
+                if len(set(ids)) != len(ids):
+                    raise ValueError("gallery ID collision; resolve duplicate shader identities before retrying")
         index_path.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
 
         replacements = [(package, package_target), (shaders / SHADER, artwork / "shaders" / SHADER)]
@@ -239,6 +277,29 @@ def main():
             if len(header) != 24 or header[:8] != b"\x89PNG\r\n\x1a\n" or struct.unpack(">II", header[16:24]) != (width, height):
                 raise ValueError(f"invalid staged artwork: {png}")
             replacements.append((png, artwork / png.name))
+
+        if args.stage_only:
+            # The build may take minutes. Recheck the empty destination before exporting.
+            check_path(args.stage_only, directory=True)
+            if args.stage_only.exists() and any(args.stage_only.iterdir()):
+                raise ValueError(f"staging destination must be empty: {args.stage_only}")
+            args.stage_only.mkdir(parents=True, exist_ok=True)
+            for path, final in replacements:
+                for child in (path, *path.rglob("*")) if path.is_dir() else (path,):
+                    check_path(child, child.is_dir())
+                target = args.stage_only / final.relative_to("/")
+                check_path(target, path.is_dir())
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if path.is_dir():
+                    shutil.copytree(path, target)
+                else:
+                    shutil.copy2(path, target)
+            for path in (args.stage_only, *args.stage_only.rglob("*")):
+                check_path(path, path.is_dir())
+                path.chmod(0o755 if path.is_dir() else 0o644)
+            print(f"Shader wallpaper staged at {args.stage_only}; final data paths: {data}. "
+                  "No user deployment or session calls were made.", file=sys.stderr)
+            return
 
         if not args.install_only:
             topology = run("kscreen-doctor", "--json", capture=True)

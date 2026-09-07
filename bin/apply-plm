@@ -1,0 +1,1092 @@
+#!/usr/bin/env python3
+"""Prepare as the desktop user, then install/configure/select PLM for next boot.
+
+Never starts/stops a display manager or reboots. Recovery uses a protected copy
+of this file, not the checkout, and deliberately leaves installed packages alone.
+"""
+
+import argparse
+import base64
+from datetime import datetime, timezone
+import fcntl
+import grp
+import hashlib
+import io
+import json
+import os
+from pathlib import Path, PurePosixPath
+import pwd
+import re
+import shlex
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+
+
+PLUGIN = "online.knowmad.shaderwallpaper"
+BACKUPS = Path("/var/backups/arasaka-kde")
+LOCK = Path("/run/arasaka-kde-plm.lock")
+DEFAULT = Path("/etc/X11/default-display-manager")
+ALIAS = Path("/etc/systemd/system/display-manager.service")
+CONFIG = Path("/etc/plasmalogin.conf")
+QUESTION = "shared/default-x-display-manager"
+PACKAGES = {"plasmalogin": "6.7.4-0arasaka1", "arasaka-login-wallpaper": "1.0-1"}
+BASELINE_FILES = ("user-files.json", "desktop-shader.json", "packages-before-build.tsv",
+                  "package-provenance.json", "dependency-install-transaction.txt",
+                  "packages-before-dependencies.reconstructed.tsv")
+INVOCATION_FILES = (*BASELINE_FILES[:4], "audit-drift.json")
+SOURCE_HASH = "8ba5f9a5b31b2cb09d6846c590d09891dadb9a5625426b8552577299093b67fd"
+# These are the inspected generated control scripts, including debhelper spacing.
+SCRIPT_HASHES = {
+    "config": "af9cd8ecffead5909593f68f89327e9eabc4fe479f8e233e9b590ad6b4074aaa",
+    "postinst": "6167011e9f1ca29d3e336ead45e0f4d1d1e4be5fedd0d375d7de55787e0bee2d",
+    "postrm": "2562b904057fd74fd95157a67dc44e18276d2b7435d8dc0a14316a4664d188f4",
+}
+PAM_HASHES = {
+    "plasmalogin": "bb8d90028682eb80ba339d689b035004cf359d98bde0d01b25fcea7012b1e714",
+    "plasmalogin-autologin": "a7213279e7140359bb3b7e42e756033bd4e52dde6b60f044a23677f7f4369c5e",
+    "plasmalogin-greeter": "ef76e697854683ab5650970dfac2dd05c52e28101c8a9dbdb7058a66b7937349",
+}
+SHADER = {
+    "selectedShaderPath": "file:///usr/share/wallpapers/Arasaka/shaders/Heartfelt_No_Heart.frag",
+    "selectedShaderCode": "", "commonCode": "", "running": "true",
+    "shaderSpeed": "0.75", "targetFps": "30", "resolutionScale": "1",
+    "pauseMode": "3", "checkActiveScreen": "true", "excludeWindows": "",
+    "mouseEnabled": "false", "audioEnabled": "false", "windowsEnabled": "false",
+    "playlistEnabled": "false", "enableShaderTweaks": "false", "watchSourceFile": "false",
+    "useBufferA": "false", "useBufferB": "false", "useBufferC": "false", "useBufferD": "false",
+    "iChannel0Enabled": "true", "iChannel0": "file:///usr/share/wallpapers/Arasaka/mikoshi-16x9.png",
+    "imageChannel0": "0", "iChannel1Enabled": "false", "iChannel2Enabled": "false",
+    "iChannel3Enabled": "false", "imageChannel1": "-1", "imageChannel2": "-1", "imageChannel3": "-1",
+}
+DESKTOP_KEYS = tuple(k for k in SHADER if k not in {
+    "checkActiveScreen", "excludeWindows", "watchSourceFile", "imageChannel1", "imageChannel2", "imageChannel3"})
+CONFIG_NAMES = ("plasma-org.kde.plasma.desktop-appletsrc", "plasmashellrc", "kwinrc",
+                "kglobalshortcutsrc", "kdeglobals", "kscreenlockerrc", "kcminputrc", "ksmserverrc",
+                "kwinoutputconfig.json", "ksplashrc", "kactivitymanagerdrc", "konsolerc",
+                "dolphinrc", "klaunchrc")
+CONFIG_TREES = (".config/environment.d", ".config/systemd/user", ".local/share/kscreen",
+                ".local/share/plasma/plasmoids", f".local/share/plasma/wallpapers/{PLUGIN}",
+                ".local/share/wallpapers/Arasaka")
+PLM_SOURCES = ("/etc/plasmalogin.conf.d", "/usr/lib/plasmalogin/defaults.conf",
+               "/usr/lib/plasmalogin/plasmalogin.conf.d")
+SDDM_PATHS = ("/etc/sddm.conf", "/etc/sddm.conf.d", "/usr/lib/sddm/sddm.conf.d",
+              "/var/lib/sddm/state.conf", "/etc/systemd/system/sddm.service.d",
+              "/etc/systemd/system/display-manager.service.d", "/usr/lib/systemd/system/sddm.service")
+PLM_UNITS = ("plasma-login.service", "plasma-login-kwin_wayland.service", "plasma-wallpaper.service",
+             "plasma-login-wayland.target")
+PLM_FILES = {
+    *(f"/etc/pam.d/{name}" for name in PAM_HASHES),
+    "/usr/bin/plasmalogin", "/usr/bin/plasma-login-wallpaper", "/usr/bin/startplasma-login-wayland",
+    "/usr/lib/systemd/system/plasmalogin.service", *(f"/usr/lib/systemd/user/{name}" for name in PLM_UNITS),
+    "/usr/lib/sysusers.d/plasmalogin.conf", "/usr/lib/tmpfiles.d/plasmalogin.conf",
+    "/usr/lib/kf6/kauth/libexec/kcmplasmalogin_authhelper",
+    *(f"/usr/lib/x86_64-linux-gnu/libexec/{name}" for name in
+      ("plasma-login-greeter", "plasmalogin-helper", "plasmalogin-helper-start-x11user")),
+    "/usr/lib/x86_64-linux-gnu/qt6/plugins/plasma/kcms/systemsettings/kcm_plasmalogin.so",
+    "/usr/share/applications/kcm_plasmalogin.desktop",
+    "/usr/share/dbus-1/system-services/org.kde.kcontrol.kcmplasmalogin.service",
+    "/usr/share/dbus-1/system.d/org.kde.kcontrol.kcmplasmalogin.conf",
+    "/usr/share/dbus-1/system.d/plasmalogin_org.freedesktop.DisplayManager.conf",
+    "/usr/share/polkit-1/actions/org.kde.kcontrol.kcmplasmalogin.policy",
+    *(f"/usr/share/plasmalogin/scripts/{name}" for name in ("Xsession", "Xsetup", "Xstop", "wayland-session")),
+}
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def recovery_notice(message, error=False):
+    # Diagnostics must never prevent recovery or turn completed recovery into failure.
+    try:
+        print(message, file=sys.stderr if error else sys.stdout, flush=True)
+    except Exception:
+        pass
+
+
+def run(*command, input=None, binary=False, allowed=(0,), log=None):
+    result = subprocess.run(list(map(str, command)), input=input, text=not binary,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if log:
+        Path(log).write_text(result.stdout + result.stderr)
+    require(result.returncode in allowed,
+            f"{shlex.join(map(str, command))}: exit {result.returncode}: {result.stderr!s}; log: {log}")
+    return result.stdout
+
+
+def safe_path(path, owner=None, leaf_link=False, merged=False):
+    path = Path(path)
+    require(path.is_absolute() and ".." not in path.parts, f"unsafe path: {path}")
+    for part in (*reversed(path.parents), path):
+        try:
+            info = part.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(info.st_mode):
+            if leaf_link and part == path:
+                require(owner is None or info.st_uid == owner, f"wrong link owner: {part}")
+                continue
+            if merged and str(part) in ("/bin", "/sbin", "/lib", "/lib64"):
+                target = Path("/usr") / part.name
+                require(os.readlink(part) in (str(target), f"usr/{part.name}"), f"nonstandard alias: {part}")
+                safe_path(target, owner=0)
+                require(target.is_dir(), f"invalid merged-/usr target: {target}")
+                continue
+            raise ValueError(f"unexpected symlink: {part}")
+        require(part == path or stat.S_ISDIR(info.st_mode), f"non-directory ancestor: {part}")
+        if owner == 0 or (owner is not None and part == path):
+            require(info.st_uid == owner and not info.st_mode & (0o022 if owner == 0 else 0o002),
+                    f"unsafe ownership/mode: {part}")
+    return path
+
+
+def read_regular(path, owner=None, limit=128 * 1024 * 1024):
+    path = safe_path(path, owner)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        before = os.fstat(stream.fileno())
+        require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and before.st_size <= limit,
+                f"not a bounded, single-link regular file: {path}")
+        require(owner is None or before.st_uid == owner, f"wrong owner: {path}")
+        data = stream.read(limit + 1)
+        after = os.fstat(stream.fileno())
+        require((before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) ==
+                (after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns), f"file changed: {path}")
+    return data
+
+
+def atomic(path, data, mode=0o600, uid=0, gid=0):
+    path = safe_path(path, owner=0)
+    require(not path.exists() or path.is_file(), f"not a regular destination: {path}")
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.plm-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            os.fchown(stream.fileno(), uid, gid)
+            os.fchmod(stream.fileno(), mode)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, path)
+        fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def save_json(path, value):
+    data = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
+    if os.geteuid() == 0:
+        atomic(path, data)
+    else:
+        Path(path).write_bytes(data)
+
+
+def package_inventory():
+    return run("dpkg-query", "-W", "-f=${binary:Package}\t${Version}\t${db:Status-Abbrev}\n")
+
+
+def installed_packages():
+    return {row.split("\t")[0]: row.split("\t")[1] for row in package_inventory().splitlines()
+            if row.split("\t")[2].startswith("ii")}
+
+
+def user_files(home, prior=None):
+    fixed = {home / ".config" / name for name in CONFIG_NAMES}
+    fixed.update(home / name for name in (".zshrc", ".bashrc", ".profile"))
+    trees = [home / name for name in CONFIG_TREES]
+    paths = set(fixed)
+    for tree in trees:
+        paths.add(tree)
+        if tree.is_dir() and not tree.is_symlink():
+            paths.update(tree.rglob("*"))
+    for name in prior or {}:
+        path = Path(name)
+        require(path in fixed or any(path == tree or tree in path.parents for tree in trees),
+                f"baseline path outside digest allowlist: {path}")
+        paths.add(path)
+    result = {}
+    for path in sorted(paths):
+        if path.is_symlink():
+            result[str(path)] = {"symlink": os.readlink(path)}
+        elif not path.exists():
+            result[str(path)] = {"missing": True}
+        elif path.is_file():
+            result[str(path)] = {"sha256": digest(read_regular(path))}
+        else:
+            require(path.is_dir(), f"unexpected user asset type: {path}")
+    return result
+
+
+def desktop_state(home):
+    require(os.geteuid() != 0, "root must not capture the desktop")
+    # currentConfigGroup only moves the script's read cursor; no configuration setter is used.
+    script = """var keys = %s;
+var result = desktops().filter(function(d) { return d.screen >= 0; }).map(function(d) {
+    d.currentConfigGroup = ["Wallpaper", %s, "General"];
+    var config = {};
+    keys.forEach(function(k) { config[k] = String(d.readConfig(k, "")); });
+    return {id:d.id, screen:d.screen, wallpaperPlugin:d.wallpaperPlugin, config:config};
+});
+print(JSON.stringify(result));""" % (json.dumps(DESKTOP_KEYS), json.dumps(PLUGIN))
+    state = json.loads(run("qdbus6", "org.kde.plasmashell", "/PlasmaShell",
+                           "org.kde.PlasmaShell.evaluateScript", script))
+    require(state and all(isinstance(d["screen"], int) and d["screen"] >= 0 for d in state)
+            and len({d["screen"] for d in state}) == len(state) and len({d["id"] for d in state}) == len(state),
+            "need nonempty active desktops with unique screen numbers and desktop IDs")
+    textures = {(home / ".local/share/wallpapers/Arasaka" / name).as_uri()
+                for name in ("mikoshi-16x9.png", "mikoshi-16x10.png")}
+    for desktop in state:
+        expected = {key: SHADER[key] for key in DESKTOP_KEYS if key != "iChannel0"}
+        expected["pauseMode"] = "0"
+        expected["selectedShaderPath"] = (home / ".local/share/wallpapers/Arasaka/shaders/Heartfelt_No_Heart.frag").as_uri()
+        mismatches = [key for key, value in expected.items() if desktop["config"].get(key) != value]
+        if desktop["config"].get("iChannel0") not in textures:
+            mismatches.append("iChannel0")
+        if desktop["wallpaperPlugin"] != PLUGIN:
+            mismatches.append("wallpaperPlugin")
+        require(not mismatches, f"unapproved desktop shader/parameters on desktop {desktop['id']}, "
+                f"screen {desktop['screen']}: {', '.join(sorted(mismatches))}; ask for appearance review")
+    return sorted(state, key=lambda d: d["id"])
+
+
+def changed_paths(before, after):
+    return sorted(path for path in before.keys() | after.keys() if before.get(path) != after.get(path))
+
+
+def desktop_changes(before, after):
+    before = {d["id"]: d for d in before if d["screen"] >= 0}
+    after = {d["id"]: d for d in after if d["screen"] >= 0}
+    changes = {}
+    for ident in sorted(before.keys() | after.keys()):
+        if ident not in before or ident not in after:
+            changes[str(ident)] = ["activated" if ident in after else "deactivated"]
+            continue
+        fields = [key for key in ("screen", "wallpaperPlugin") if before[ident][key] != after[ident][key]]
+        fields.extend("config/" + key for key in changed_paths(before[ident]["config"], after[ident]["config"]))
+        if fields:
+            changes[str(ident)] = fields
+    return changes
+
+
+def baseline_capture(home, supplied):
+    state = desktop_state(home)
+    prior, old, audit = {}, [], None
+    if supplied:
+        audit = safe_path(Path(supplied).absolute(), owner=os.getuid())
+        for name in BASELINE_FILES[:3]:
+            read_regular(audit / name, os.getuid())
+        if (audit / "package-provenance.json").exists():
+            provenance = json.loads(read_regular(audit / "package-provenance.json", os.getuid()))
+            if provenance.get("captured_after_user_dependency_install"):
+                for name in BASELINE_FILES[4:]:
+                    read_regular(audit / name, os.getuid())
+        prior = json.loads(read_regular(audit / "user-files.json", os.getuid()))
+        old = json.loads(read_regular(audit / "desktop-shader.json", os.getuid()))
+    files = user_files(home, prior)
+    drift = {"changed_paths": changed_paths(prior, {path: files.get(path) for path in prior}),
+             "newly_recorded_paths": sorted(files.keys() - prior.keys()) if audit else [],
+             "desktop_changes": desktop_changes(old, state) if audit else {},
+             "note": "Historical audit differences predate this invocation, not evidence of migration changes."}
+    parent = safe_path(home / ".local/state/arasaka-kde", owner=os.getuid())
+    parent.mkdir(parents=True, exist_ok=True)
+    baseline = Path(tempfile.mkdtemp(prefix="plm-invocation-", dir=parent))
+    save_json(baseline / "user-files.json", files)
+    save_json(baseline / "desktop-shader.json", state)
+    (baseline / "packages-before-build.tsv").write_text(package_inventory())
+    save_json(baseline / "package-provenance.json", {
+        "captured_at": datetime.now(timezone.utc).isoformat(), "audit_baseline": str(audit) if audit else None,
+        "captured_inventory": "packages-before-build.tsv",
+        "capture": "Before this invocation's build; apply-plm never installs build dependencies.",
+        "prior_dependency_install_history": "See separate supplied audit provenance." if audit else
+                                            "Unknown; no retrospective inventory invented."})
+    save_json(baseline / "audit-drift.json", drift)
+    print(f"Current invocation baseline: {baseline}", flush=True)
+    if audit:
+        print(f"Historical audit retained unchanged: {audit}", flush=True)
+        print("Historical digest changes (may include runtime-only updates; not attributed to migration):\n" +
+              ("\n".join(drift["changed_paths"]) or "(none)"), flush=True)
+        print("Historical desktop differences: " + json.dumps(drift["desktop_changes"], sort_keys=True), flush=True)
+        print(f"New digest coverage: {len(drift['newly_recorded_paths'])} paths; see {baseline / 'audit-drift.json'}", flush=True)
+        artwork = home / ".local/share/wallpapers/Arasaka"
+        managed = {str(artwork / name) for name in
+                   ("shaders/Heartfelt_No_Heart.frag", "mikoshi-16x9.png", "mikoshi-16x10.png")}
+        changed_assets = sorted(managed.intersection(drift["changed_paths"]))
+        require(not changed_assets, "managed shader/artwork digests changed since audit; review before migration:\n" +
+                "\n".join(changed_assets))
+    return baseline, files, state
+
+
+def check_user_preservation(home, files, desktop, phase):
+    changed = changed_paths(files, user_files(home, files))
+    changes = desktop_changes(desktop, desktop_state(home))
+    require(not changed and not changes, f"changes observed {phase} relative to this invocation's baseline "
+            "(runtime writes are possible; no migration attribution or reset):\n" +
+            "\n".join(changed) + "\nDesktop differences: " + json.dumps(changes, sort_keys=True))
+
+
+def owners_map():
+    owners = {}
+    for listing in Path("/var/lib/dpkg/info").glob("*.list"):
+        for name in listing.read_text().splitlines():
+            path = Path(name)
+            if len(path.parts) > 1 and path.parts[1] in ("bin", "sbin", "lib", "lib64"):
+                safe_path(Path("/") / path.parts[1], owner=0, merged=True)
+                if (Path("/") / path.parts[1]).is_symlink():
+                    path = Path("/usr") / path.relative_to("/")
+            owners.setdefault(str(path), set()).add(listing.stem.split(":")[0])
+    return owners
+
+
+def archive_members(package, control=False):
+    data = run("dpkg-deb", "--ctrl-tarfile" if control else "--fsys-tarfile", package, binary=True)
+    result = {}
+    with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+        for member in archive:
+            path = PurePosixPath(member.name)
+            require(not path.is_absolute() and ".." not in path.parts and str(path) not in result,
+                    f"unsafe/duplicate archive member: {member.name}")
+            require(member.uid == member.gid == 0 and (member.isdir() or member.isfile())
+                    and not member.mode & 0o7022, f"unsafe payload ownership/type/mode: {member.name}")
+            result[str(path)] = (member, archive.extractfile(member).read() if member.isfile() else None)
+    return result
+
+
+def inspect_packages(directory, inventory, evidence, installed=False):
+    require(run("dpkg", "--print-architecture").strip() == "amd64", "these reviewed artifacts require native amd64")
+    require(inventory["source"]["version"] == "6.7.4" and inventory["source"]["sha256"] == SOURCE_HASH,
+            "inventory source pin differs")
+    entries = inventory["packages"]
+    require(len(entries) == 2 and {e["package"] for e in entries} ==
+            {f"{name}_{version}_amd64.deb" for name, version in PACKAGES.items()}, "need exactly both inspected packages")
+    owners = owners_map()
+    all_files = {}
+    for entry in entries:
+        package = directory / entry["package"]
+        require(digest(read_regular(package)) == entry["sha256"], f"package hash mismatch: {package}")
+        name = run("dpkg-deb", "--field", package, "Package").strip()
+        require(name in PACKAGES and run("dpkg-deb", "--field", package, "Version").strip() == PACKAGES[name]
+                and run("dpkg-deb", "--field", package, "Architecture").strip() == "amd64", "unexpected package metadata")
+        require(package.name == f"{name}_{PACKAGES[name]}_amd64.deb", "artifact filename and metadata disagree")
+        for field in ("Conflicts", "Replaces", "Breaks"):
+            require(not run("dpkg-deb", "--field", package, field).strip(), f"unexpected {field} in {name}")
+        require(run("dpkg-deb", "--field", package, "Provides").strip() ==
+                ("x-display-manager" if name == "plasmalogin" else ""), "unexpected virtual package registration")
+        for option, suffix in (("--info", "info"), ("--contents", "contents")):
+            actual = run("dpkg-deb", option, package)
+            recorded = read_regular(evidence / f"{name}.{suffix}").decode()
+            if suffix == "info":
+                # dpkg's archive-size preamble is localized; the control fields are not.
+                require("\n Package:" in actual and "\n Package:" in recorded, "missing inspected control metadata")
+                actual, recorded = (value.split("\n Package:", 1)[1] for value in (actual, recorded))
+            require(actual == recorded, f"inspection evidence mismatch: {name}.{suffix}")
+        control = archive_members(package, control=True)
+        require(set(control) <= {".", "control", "md5sums", "templates", "conffiles", *SCRIPT_HASHES},
+                f"unexpected control archive entries: {name}")
+        scripts = {key: value[1].decode() for key, value in control.items()
+                   if key in {"templates", "conffiles", *SCRIPT_HASHES}}
+        require(scripts == json.loads(read_regular(evidence / f"{name}.scripts.json")), "control evidence differs")
+        if name == "plasmalogin":
+            for key, expected in SCRIPT_HASHES.items():
+                require(key in scripts and digest(scripts[key].encode()) == expected,
+                        f"unreviewed {name}/{key}; review generated lifecycle script before updating controller pin")
+            require(set(scripts["conffiles"].splitlines()) == {f"/etc/pam.d/{key}" for key in PAM_HASHES}, "unexpected PAM conffiles")
+        else:
+            require(not scripts, "wallpaper must have no scripts or conffiles")
+        payload = archive_members(package)
+        directory_paths = {ancestor for relative, (member, _) in payload.items() if member.isfile()
+                           for ancestor in (Path("/") / relative).parents}
+        files = []
+        directories = 0
+        for relative, (member, data) in payload.items():
+            destination = Path("/") / relative
+            require(relative == "." or destination.parts[1] in ("etc", "usr"), f"payload outside system boundary: {destination}")
+            if name == "arasaka-login-wallpaper":
+                roots = [Path(f"/usr/share/plasma/wallpapers/{PLUGIN}"), Path("/usr/share/wallpapers/Arasaka"),
+                         Path("/usr/share/doc/arasaka-login-wallpaper")]
+                require(any(root in destination.parents or (member.isdir() and
+                            (root == destination or destination in root.parents)) for root in roots), f"wallpaper boundary: {destination}")
+            elif member.isfile():
+                require(str(destination) in PLM_FILES or Path("/usr/share/doc/plasmalogin") in destination.parents
+                        or re.fullmatch(r"/usr/share/locale/[^/]+/LC_MESSAGES/(kcm_plasmalogin|plasma_login)\.mo", str(destination)),
+                        f"non-PLM payload: {destination}")
+            require(not member.isdir() or destination in directory_paths, f"unnecessary payload directory: {destination}")
+            safe_path(destination, owner=0, merged=True)
+            for ancestor in (*destination.parents, destination if member.isdir() else destination.parent):
+                if ancestor.exists():
+                    require(ancestor.is_dir() and (ancestor == Path("/") or owners.get(str(ancestor))),
+                            f"unowned/non-directory payload ancestor: {ancestor}")
+            claimed = owners.get(str(destination), set())
+            if member.isdir():
+                require(not destination.exists() or destination.is_dir(), f"directory collision: {destination}")
+                directories += 1
+                continue
+            require(not claimed - {name}, f"non-PLM package collision: {destination}: {claimed}")
+            require(not destination.exists() or (installed and claimed == {name}), f"pre-existing payload: {destination}")
+            require(destination.suffix not in {".a", ".h", ".hpp", ".cmake", ".pc", ".o", ".cpp", ".debug"},
+                    f"development payload: {destination}")
+            require(str(destination) not in all_files, f"cross-package collision: {destination}")
+            if destination.parent == Path("/etc/pam.d"):
+                require(destination.name in PAM_HASHES and digest(data) == PAM_HASHES[destination.name], "PAM differs from pinned Debian source")
+            if name == "arasaka-login-wallpaper" and destination.suffix in (".qml", ".json", ".xml", ".qrc"):
+                require(not any(marker in data for marker in (b"/home/", b"/build/plm/", b"file:///tmp/")),
+                        f"private/build-time path in login resource: {destination}")
+            files.append(str(destination))
+            all_files[str(destination)] = {"package": name, "sha256": digest(data), "mode": member.mode}
+            if installed:
+                info = destination.stat()
+                require(info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == member.mode
+                        and digest(read_regular(destination, 0)) == digest(data), f"installed content/ownership differs: {destination}")
+        require(sorted(files) == sorted(entry["files"]) and len(files) == entry["file_count"]
+                and directories == entry["directory_count"] and entry["root_owned"] is True
+                and entry["collisions"] == [], f"payload inventory differs: {name}")
+    required = PLM_FILES | {
+        f"/usr/share/plasma/wallpapers/{PLUGIN}/contents/ui/shaderwallpaper/libshaderwallpaperplugin.so",
+        f"/usr/share/plasma/wallpapers/{PLUGIN}/contents/ui/shaderwallpaper/qmldir",
+        f"/usr/share/plasma/wallpapers/{PLUGIN}/metadata.json", f"/usr/share/plasma/wallpapers/{PLUGIN}/contents/ui/main.qml",
+        "/usr/share/wallpapers/Arasaka/shaders/Heartfelt_No_Heart.frag", "/usr/share/wallpapers/Arasaka/mikoshi-16x9.png",
+        "/usr/share/wallpapers/Arasaka/mikoshi-16x10.png"}
+    require(required <= all_files.keys(), f"missing required runtime payload: {required - all_files.keys()}")
+    return all_files
+
+
+def debconf(owner, command):
+    require("\n" not in command and "\r" not in command, "invalid debconf command")
+    response = run("debconf-communicate", owner, input=command + "\n").splitlines()
+    require(len(response) == 1 and response[0].split(" ", 1)[0] == "0",
+            f"debconf rejected {command}: {response}")
+    return response[0][2:]
+
+
+def enablement(name):
+    if run("systemctl", "show", name, "--property=LoadState", "--value").strip() == "not-found":
+        return "not-found"
+    return run("systemctl", "is-enabled", name, allowed=(0, 1, 4)).strip()
+
+
+def manager_links():
+    links = {}
+    for root in (Path("/etc/systemd/system"), Path("/run/systemd/system")):
+        for path in root.rglob("*"):
+            if path.is_symlink():
+                target = os.readlink(path)
+                if path.name in ("display-manager.service", "sddm.service", "plasmalogin.service") or Path(target).name in ("sddm.service", "plasmalogin.service"):
+                    safe_path(path, owner=0, leaf_link=True)
+                    require(root == Path("/etc/systemd/system"), f"unexpected runtime manager override: {path}")
+                    require(target != "/dev/null", f"masked display manager: {path}")
+                    links[str(path)] = target
+    return links
+
+
+def selectors():
+    return {"default": read_regular(DEFAULT, 0).decode(), "links": manager_links(),
+            "debconf": debconf("sddm", f"GET {QUESTION}"), "seen": debconf("sddm", f"FGET {QUESTION} seen"),
+            "sddm": enablement("sddm.service"), "plasmalogin": enablement("plasmalogin.service")}
+
+
+def running_sddm():
+    values = dict(line.split("=", 1) for line in run("systemctl", "show", "sddm.service",
+                  "--property=MainPID,ActiveState,FragmentPath,InvocationID").splitlines())
+    require(values["ActiveState"] == "active" and values["MainPID"].isdigit() and int(values["MainPID"]) > 0
+            and re.fullmatch(r"[0-9a-f]{32}", values["InvocationID"])
+            and Path(values["FragmentPath"]).resolve() == Path("/usr/lib/systemd/system/sddm.service"),
+            f"expected the active installed SDDM service: {values}")
+    process = Path("/proc") / values["MainPID"]
+    # /proc stat field 22 is starttime; comm (field 2) may itself contain spaces/parentheses.
+    start = (process / "stat").read_text().rsplit(")", 1)[1].split()[19]
+    values["Executable"] = os.readlink(process / "exe")
+    values["BootID"] = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    values["StartTimeTicks"] = start
+    require(values["Executable"] == "/usr/bin/sddm", "SDDM executable changed")
+    require(start.isdigit() and start == (process / "stat").read_text().rsplit(")", 1)[1].split()[19],
+            "SDDM process changed during identity capture")
+    return values
+
+
+def initial_manager():
+    state = selectors()
+    require(state["default"] == "/usr/bin/sddm\n" and state["debconf"] == "sddm"
+            and state["seen"] in ("true", "false") and state["sddm"] == "enabled"
+            and state["plasmalogin"] == "not-found", f"unexpected manager selection: {state}")
+    require(set(state["links"]) == {str(ALIAS)} and ALIAS.resolve() == Path("/usr/lib/systemd/system/sddm.service"),
+            "unexpected display-manager alias/enablement links")
+    return state, running_sddm()
+
+
+def snapshot(path, digest_only=False):
+    path = Path(path)
+    if digest_only and path.is_symlink():
+        safe_path(path, owner=0, leaf_link=True)
+        return {"symlink": os.readlink(path)}
+    private_state = str(path) in ("/var/lib/sddm/state.conf", "/var/lib/plasmalogin", "/var/lib/plasmalogin/state.conf")
+    safe_path(path, owner=None if private_state else 0)
+    if not path.exists():
+        return {"missing": True}
+    info = path.stat()
+    if private_state:
+        account = pwd.getpwnam("sddm" if "/sddm/" in str(path) else "plasmalogin")
+        safe_path("/var/lib", owner=0)
+        parent = Path(account.pw_dir).stat()
+        require(parent.st_uid == account.pw_uid and not parent.st_mode & 0o022 and
+                info.st_uid in (0, account.pw_uid) and not info.st_mode & 0o022, f"unsafe manager state: {path}")
+    entry = {"mode": stat.S_IMODE(info.st_mode), "uid": info.st_uid, "gid": info.st_gid}
+    if path.is_dir():
+        entry["directory"] = True
+    elif digest_only:
+        entry["sha256"] = digest(read_regular(path))
+    else:
+        entry["data"] = base64.b64encode(read_regular(path)).decode()
+    return entry
+
+
+def protected_snapshot():
+    paths = [CONFIG, *map(Path, PLM_SOURCES), *map(Path, SDDM_PATHS),
+             Path("/var/lib/plasmalogin"), Path("/var/lib/plasmalogin/state.conf"), Path("/run/plasmalogin"),
+             Path("/etc/login.defs"), Path("/etc/environment"), Path("/etc/default/locale"), Path("/etc/locale.conf"),
+             Path("/usr/share/wayland-sessions/plasma.desktop")]
+    paths.extend(Path("/etc/pam.d").glob("common-*"))
+    paths.extend(Path("/etc/pam.d").glob("sddm*"))
+    for root in ("/etc/systemd/system", "/run/systemd/system", "/etc/systemd/user", "/run/systemd/user",
+                 "/usr/lib/systemd/system", "/usr/lib/systemd/user", "/usr/local/lib/systemd/system", "/usr/local/lib/systemd/user"):
+        for name in ("plasmalogin.service", *PLM_UNITS):
+            paths.extend((Path(root) / name, Path(root) / (name + ".d")))
+    result = {}
+    for path in paths:
+        result[str(path)] = snapshot(path, digest_only=str(path) in ("/etc/environment", "/etc/default/locale", "/etc/locale.conf"))
+        # Never walk a display manager's home or collect its authentication files.
+        if path.is_dir() and path not in (Path("/var/lib/plasmalogin"), Path("/run/plasmalogin")):
+            for child in path.rglob("*"):
+                result[str(child)] = snapshot(child)
+    return result
+
+
+def config_groups(user):
+    return {"[Autologin]": {"User": "", "Session": "", "Relogin": "false"},
+            "[Greeter]": {"WallpaperPluginId": PLUGIN, "ShowClock": "false",
+                          "PreselectedUser": user, "PreselectedSession": "plasma.desktop"},
+            f"[Greeter][Wallpaper][{PLUGIN}][General]": SHADER}
+
+
+def kconfig(text, groups, edit=False):
+    output, group, seen, present = [], "", set(), set()
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        require(not (stripped and not stripped.startswith("#") and "[$" in stripped),
+                "immutable/expanded KConfig override requires manual review")
+        if stripped.startswith("["):
+            require(re.fullmatch(r"(?:\[[^\[\]\\]+\])+", stripped), "unrecognized KConfig group")
+            group = stripped
+        if group in groups and stripped and not stripped.startswith(("[", "#")):
+            require("=" in stripped, "unrecognized managed KConfig entry")
+            key, value = stripped.split("=", 1)
+            key = key.strip()
+            require("\\" not in key and "[" not in key, "escaped/localized managed-group key requires review")
+            if key in groups[group]:
+                require((group, key) not in seen, f"duplicate KConfig key: {group}/{key}")
+                seen.add((group, key))
+                if edit:
+                    line = f"{key}={groups[group][key]}\n"
+                else:
+                    require(value == groups[group][key], f"unexpected fallback setting: {group}/{key}")
+                present.add((group, key))
+        output.append(line)
+    if edit:
+        # Repeated KConfig group headers merge; append only absent owned keys.
+        for group, values in groups.items():
+            missing = {key: value for key, value in values.items() if (group, key) not in present}
+            if missing:
+                output.append("\n" + group + "\n" + "".join(f"{key}={value}\n" for key, value in missing.items()))
+    return "".join(output), present
+
+
+def check_config_sources(groups):
+    for name in PLM_SOURCES:
+        path = safe_path(name, owner=0)
+        paths = list(path.rglob("*")) if path.is_dir() else [path]
+        for child in paths:
+            safe_path(child, owner=0)
+            if child.is_file():
+                kconfig(read_regular(child, 0).decode(), groups)
+    for root in ("/etc/systemd/system", "/run/systemd/system", "/etc/systemd/user", "/run/systemd/user",
+                 "/usr/local/lib/systemd/system", "/usr/local/lib/systemd/user"):
+        for name in ("plasmalogin.service", *PLM_UNITS):
+            for path in (Path(root) / name, Path(root) / (name + ".d")):
+                require(not os.path.lexists(path), f"unexpected PLM unit override: {path}")
+    for root in ("/usr/lib/systemd/system", "/usr/lib/systemd/user"):
+        for name in ("plasmalogin.service", *PLM_UNITS):
+            require(not os.path.lexists(Path(root) / (name + ".d")), "unexpected vendor PLM service drop-in")
+    for directory in ("sysusers.d", "tmpfiles.d"):
+        for root in ("/etc", "/run"):
+            require(not os.path.lexists(f"{root}/{directory}/plasmalogin.conf"), "unexpected account/state override")
+
+
+def check_session():
+    path = Path("/usr/share/wayland-sessions/plasma.desktop")
+    text = read_regular(path, 0).decode()
+    require("TryExec=/usr/bin/startplasma-wayland\n" in text and
+            re.search(r"^Exec=.* /usr/bin/startplasma-wayland$", text, re.MULTILINE), "Plasma session entry changed")
+    require(not re.search(r"^(Hidden|NoDisplay)=true$", text, re.MULTILINE), "Plasma session hidden")
+    require(os.access(safe_path("/usr/bin/startplasma-wayland", owner=0), os.X_OK), "session TryExec unavailable")
+    for root in ("/usr/local/share", "/usr/share", "/var/lib/plasmalogin/.local/share"):
+        for kind in ("xsessions", "wayland-sessions"):
+            candidate = Path(root) / kind / "plasma.desktop"
+            require(candidate == path or not os.path.lexists(candidate), f"ambiguous/shadowing session entry: {candidate}")
+
+
+def no_existing_plm():
+    for row in package_inventory().splitlines():
+        require(row.split("\t")[0].split(":")[0] not in PACKAGES, "pre-existing PLM package record; review manually")
+    for lookup in (pwd.getpwnam, grp.getgrnam):
+        try:
+            lookup("plasmalogin")
+        except KeyError:
+            continue
+        raise ValueError("pre-existing PLM account/group; refusing to adopt it")
+    for path in ("/var/lib/plasmalogin", "/run/plasmalogin"):
+        require(not os.path.lexists(path), f"pre-existing PLM state: {path}")
+    require(not run("dpkg", "--audit").strip(), "dpkg has unfinished transactions; resolve separately")
+
+
+def invoking_account(uid):
+    user = pwd.getpwuid(uid)
+    return {"user": user.pw_name, "uid": uid, "gid": user.pw_gid, "home": user.pw_dir,
+            "shell": user.pw_shell, "groups": sorted(os.getgrouplist(user.pw_name, user.pw_gid))}
+
+
+def verify_runtime(inventory, files):
+    account = pwd.getpwnam("plasmalogin")
+    group = grp.getgrnam("plasmalogin")
+    require(0 < account.pw_uid < 1000 and account.pw_gid == group.gr_gid and
+            account.pw_dir == "/var/lib/plasmalogin" and account.pw_shell in ("/usr/sbin/nologin", "/sbin/nologin", "/bin/false"),
+            "unexpected PLM system account")
+    require(not group.gr_mem and not any("plasmalogin" in g.gr_mem for g in grp.getgrall()),
+            "unexpected supplementary membership for PLM")
+    home = safe_path(account.pw_dir)
+    info = home.stat()
+    require(info.st_uid == account.pw_uid and info.st_gid == account.pw_gid and stat.S_IMODE(info.st_mode) == 0o750,
+            "PLM must own its 0750 state directory")
+    runtime = safe_path("/run/plasmalogin", owner=0).stat()
+    require(stat.S_ISDIR(runtime.st_mode) and runtime.st_gid == 0 and stat.S_IMODE(runtime.st_mode) == 0o711,
+            "unexpected PLM runtime directory")
+    check_session()
+    required = set(files) | {str(CONFIG), "/usr/share/wayland-sessions/plasma.desktop", "/usr/bin/startplasma-wayland"}
+    qml_root = Path(run("qtpaths6", "--query", "QT_INSTALL_QML").strip())
+    embedded = {"org.kde.plasma.login", "org.kde.plasma.login.wallpaper", "org.kde.private.kcms.plasmalogin"}
+    modules = set(inventory["plm_qml_imports"]) | set(inventory["wallpaper_qml_imports"])
+    for module in modules - embedded:
+        directory = qml_root / module.replace(".", "/")
+        require((directory / "qmldir").is_file(), f"unresolved QML runtime: {module}")
+        required.update(str(p) for p in directory.rglob("*") if p.is_file())
+    for binary in ("kwin_wayland", "plasma-keyboard"):
+        require(shutil.which(binary), f"missing runtime executable: {binary}")
+        required.add(shutil.which(binary))
+    for name in PAM_HASHES:
+        text = read_regular(Path("/etc/pam.d") / name, 0).decode()
+        for module in re.findall(r"\bpam_[\w]+\.so\b", text):
+            matches = list(Path("/usr/lib/x86_64-linux-gnu/security").glob(module))
+            require(matches, f"missing PAM module: {module}")
+            required.update(map(str, matches))
+    owners = owners_map()
+    for name in sorted(required):
+        path = safe_path(name, owner=0, merged=True)
+        require(path.is_file() and (path == CONFIG or owners.get(str(path))), f"unowned/missing runtime asset: {path}")
+        # Inspect the ELF dependency resolver, never invoke the greeter itself.
+        if read_regular(path)[:4] == b"\x7fELF":
+            if name in files:
+                dynamic = run("readelf", "--dynamic", path)
+                require(not re.search(r"\((?:RPATH|RUNPATH)\)", dynamic), f"unexpected private native search path: {path}")
+            dependencies = run("ldd", path)
+            require("not found" not in dependencies, f"unresolved native dependency: {path}")
+            for dependency in re.findall(r"(?:=>\s+|^\s*)(/[^\s]+)\s+\(", dependencies, re.MULTILINE):
+                # SONAME links are normal for installed libraries, not package destinations.
+                safe_path(dependency, owner=0, leaf_link=True, merged=True)
+                resolved = Path(dependency).resolve(strict=True)
+                safe_path(resolved, owner=0)
+                require(owners.get(str(resolved)), f"unowned native dependency: {resolved}")
+                required.add(str(resolved))
+    # The child drops all root identity before opening every required asset.
+    code = "import json,sys; paths=json.load(sys.stdin); [(open(p,'rb').read(1)) for p in paths]"
+    run("setpriv", f"--reuid={account.pw_uid}", f"--regid={account.pw_gid}", "--clear-groups",
+        "--no-new-privs", "/usr/bin/python3", "-I", "-B", "-c", code, input=json.dumps(sorted(required)))
+    return {"uid": account.pw_uid, "gid": account.pw_gid, "home": account.pw_dir,
+            "readable_assets": sorted(required), "note": "Asset/account inspection only; no authentication/rendering claim."}
+
+
+def migration_lock():
+    safe_path(LOCK, owner=0)
+    fd = os.open(LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    info = os.fstat(fd)
+    require(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and info.st_nlink == 1 and not info.st_mode & 0o077,
+            "unsafe migration lock")
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return fd
+
+
+def backup_path(value):
+    path = Path(value)
+    require(path.is_absolute() and path.parent == BACKUPS and re.fullmatch(r"plm-[a-zA-Z0-9_-]+", path.name),
+            "rollback path must be a direct plm-* backup directory")
+    safe_path(path, owner=0)
+    require(path.is_dir() and path.stat().st_gid == 0 and stat.S_IMODE(path.stat().st_mode) == 0o700,
+            "backup must be root:root mode 0700")
+    return path
+
+
+def recovery_command(backup, best_effort=False):
+    message = f"Protected backup: {backup}\nTTY recovery command: sudo {shlex.quote(str(backup / 'rollback.sh'))}"
+    if best_effort:
+        recovery_notice(message)
+    else:
+        print(message, flush=True)
+
+
+def restore_file(path, entry):
+    safe_path(path, owner=0)
+    if entry.get("missing"):
+        if path.exists():
+            require(path.is_file(), f"refusing to remove non-file during recovery: {path}")
+            path.unlink()
+    else:
+        atomic(path, base64.b64decode(entry["data"], validate=True), entry["mode"], entry["uid"], entry["gid"])
+
+
+def restore_config(backup, state):
+    prior = state["protected"][str(CONFIG)]
+    current = snapshot(CONFIG)
+    if current == prior:
+        return
+    require(CONFIG.exists() and read_regular(CONFIG, 0) == read_regular(backup / "configured-plasmalogin.conf", 0),
+            "PLM configuration changed outside migration; selectors can recover but configuration needs manual review")
+    restore_file(CONFIG, prior)
+
+
+def restore(backup):
+    backup = backup_path(backup)
+    state = json.loads(read_regular(backup / "snapshot.json", 0))
+    errors = []
+    # Continue restoring independent selectors even if another restoration fails.
+    operations = [
+        lambda: debconf("sddm", f"SET {QUESTION} {state['selectors']['debconf']}"),
+        lambda: debconf("sddm", f"FSET {QUESTION} seen {state['selectors']['seen']}"),
+        lambda: restore_file(DEFAULT, state["default_file"]),
+        lambda: restore_config(backup, state),
+    ]
+    for operation in operations:
+        try:
+            operation()
+        except Exception as error:
+            errors.append(str(error))
+    try:
+        current = manager_links()
+        previous = state["selectors"]["links"]
+        for name in set(current) | set(previous):
+            path = safe_path(name, owner=0, leaf_link=True)
+            require(not path.exists() or path.is_symlink(), f"unexpected manager link destination: {path}")
+            if name in previous:
+                temporary = path.parent / (".plm-rollback-" + path.name)
+                require(not os.path.lexists(temporary), f"unexpected temporary recovery path: {temporary}")
+                os.symlink(previous[name], temporary)
+                os.replace(temporary, path)
+            elif path.is_symlink():
+                path.unlink()
+        run("systemctl", "daemon-reload")
+    except Exception as error:
+        errors.append(str(error))
+    try:
+        actual = selectors()
+        expected = dict(state["selectors"])
+        # The package remains installed; its former not-found state becomes disabled.
+        if expected["plasmalogin"] == "not-found" and actual["plasmalogin"] == "disabled":
+            expected["plasmalogin"] = "disabled"
+        require(actual == expected, f"rollback selector readback differs: {actual}")
+        require(snapshot(CONFIG) == state["protected"][str(CONFIG)], "PLM configuration restoration differs")
+    except Exception as error:
+        errors.append(str(error))
+    save_json(backup / "rollback-result.json", {"errors": errors, "packages_retained": True})
+    require(not errors, "rollback incomplete: " + "; ".join(errors))
+    recovery_notice("SDDM selection and prior PLM configuration restored for next boot. No live service restarted; packages retained.")
+
+
+def apt_guard(backup):
+    backup = backup_path(backup)
+    require(Path(__file__).absolute() == backup / "helper.py", "APT guard only runs from protected backup")
+    approved = json.loads(read_regular(backup / "apt-new-packages.json", 0))
+    inventory = json.loads(read_regular(backup / "artifacts/inventory.json", 0))
+    checksums = {entry["package"]: entry["sha256"] for entry in inventory["packages"]}
+    installed = installed_packages()
+    for line in sys.stdin:
+        package = Path(line.strip())
+        require(package.is_absolute() and package.suffix == ".deb", "unexpected APT pre-install hook input")
+        name = run("dpkg-deb", "--field", package, "Package").strip()
+        version = run("dpkg-deb", "--field", package, "Version").strip()
+        require(name not in installed and not any(p.split(":")[0] == name for p in installed), f"APT attempted upgrade/reinstall: {name}")
+        require(approved.get(name) == version, f"APT transaction changed since simulation: {name} {version}")
+        if name in PACKAGES:
+            require(digest(read_regular(package, 0)) == checksums[f"{name}_{version}_amd64.deb"],
+                    f"APT substituted the reviewed local package: {name}")
+
+
+def root_apply(prepared):
+    uid = int(os.environ.get("SUDO_UID", "0"))
+    require(uid > 0, "root apply requires preparation by the invoking sudo user")
+    user = pwd.getpwuid(uid)
+    prepared = safe_path(Path(prepared), owner=uid)
+    require(prepared.is_dir() and stat.S_IMODE(prepared.stat().st_mode) == 0o700, "unsafe preparation directory")
+    request = json.loads(read_regular(prepared / "request.json", uid))
+    require(request["uid"] == uid and request["user"] == user.pw_name, "preselected user does not match sudo caller")
+    require(re.fullmatch(r"[a-z_][a-z0-9_-]*[$]?", user.pw_name), "unsupported account name")
+    lock = migration_lock()
+    try:
+        before, process = initial_manager()
+        no_existing_plm()
+        check_session()
+        groups = config_groups(user.pw_name)
+        check_config_sources(groups)
+        original = read_regular(CONFIG, 0).decode() if CONFIG.exists() else ""
+        configured, _ = kconfig(original, groups, edit=True)
+        safe_path(BACKUPS, owner=0)
+        BACKUPS.mkdir(mode=0o700, exist_ok=True)
+        backup = Path(tempfile.mkdtemp(prefix="plm-", dir=BACKUPS))
+        os.chown(backup, 0, 0)
+        backup.chmod(0o700)
+        print(f"Creating protected backup: {backup}", flush=True)
+        state = {"selectors": before, "sddm_process": process, "default_file": snapshot(DEFAULT),
+                 "protected": protected_snapshot(), "invoking_account": invoking_account(uid),
+                 "plasmalogin_account": {"missing": True}, "plasmalogin_group": {"missing": True}}
+        save_json(backup / "snapshot.json", state)
+        atomic(backup / "configured-plasmalogin.conf", configured.encode())
+        atomic(backup / "packages-before-install.tsv", package_inventory().encode())
+        atomic(backup / "helper.py", read_regular(Path(__file__).absolute(), uid), 0o700)
+        rollback = ("#!/bin/sh\nset -eu\nexec /usr/bin/python3 -I -B " + shlex.quote(str(backup / "helper.py")) +
+                    " --root-rollback " + shlex.quote(str(backup)) + "\n")
+        atomic(backup / "rollback.sh", rollback.encode(), 0o700)
+        directory_fd = os.open(BACKUPS, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        recovery_command(backup)
+        bundle = backup / "artifacts"
+        bundle.mkdir(mode=0o700)
+        allowed = {"inventory.json", *BASELINE_FILES}
+        allowed.update(f"invocation-{name}" for name in INVOCATION_FILES)
+        allowed.update(f"{name}_{version}_amd64.deb" for name, version in PACKAGES.items())
+        allowed.update(f"{name}.{suffix}" for name in PACKAGES for suffix in ("info", "contents", "scripts.json"))
+        required = {"inventory.json", *BASELINE_FILES[:3], *(f"invocation-{name}" for name in INVOCATION_FILES)}
+        require(set(request["files"]) <= allowed and required <= set(request["files"]), "unexpected preparation files")
+        for name, checksum in request["files"].items():
+            data = read_regular(prepared / name, uid)
+            require(digest(data) == checksum, f"prepared file changed: {name}")
+            atomic(bundle / name, data)
+        inventory = json.loads(read_regular(bundle / "inventory.json", 0))
+        files = inspect_packages(bundle, inventory, bundle)
+        save_json(backup / "payload.json", files)
+        artifacts = [str(bundle / f"{name}_{version}_amd64.deb") for name, version in PACKAGES.items()]
+        simulation = run("apt-get", "--simulate", "--no-install-recommends", "--no-remove", "install", *artifacts,
+                         log=backup / "apt-simulation.txt")
+        print(simulation, flush=True)
+        require(re.search(r"^0 upgraded, \d+ newly installed, 0 to remove", simulation, re.MULTILINE)
+                and not re.search(r"^(Remv|Purg) ", simulation, re.MULTILINE), "APT proposes upgrade/removal or unknown summary")
+        approved = {}
+        installed = installed_packages()
+        for line in simulation.splitlines():
+            if line.startswith("Inst "):
+                match = re.match(r"Inst ([\w.+:-]+) \(([^ ]+) ", line)
+                require(match is not None, f"APT upgrade/unrecognized transaction: {line}")
+                name, version = match.groups()
+                require(not any(p.split(":")[0] == name.split(":")[0] for p in installed), f"APT upgrades installed package: {name}")
+                approved[name.split(":")[0]] = version
+        require(all(approved.get(name) == version for name, version in PACKAGES.items()), "APT did not select both exact artifacts")
+        save_json(backup / "apt-new-packages.json", approved)
+        require(selectors() == before and running_sddm() == process, "manager changed during preparation")
+        require(protected_snapshot() == state["protected"], "protected configuration changed before APT")
+        # Once APT begins, every failure restores selectors and our sole config edit.
+        try:
+            hook = shlex.join(["/usr/bin/python3", "-I", "-B", str(backup / "helper.py"), "--apt-guard", str(backup)])
+            # Defer handled signals until APT/dpkg have exited, then recover. Do not
+            # race restoration against an orphaned package installation subprocess.
+            interrupted = []
+            handlers = {sig: signal.signal(sig, lambda sig, frame: interrupted.append(sig))
+                        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+            try:
+                run("apt-get", "--yes", "--no-install-recommends", "--no-remove", "--no-upgrade",
+                    "-o", f"DPkg::Pre-Install-Pkgs::={hook}", "install", *artifacts, log=backup / "apt-install.txt")
+                require(not interrupted, "migration interrupted during APT; restoring after package process exited")
+            finally:
+                for sig, handler in handlers.items():
+                    signal.signal(sig, handler)
+            after = selectors()
+            expected = dict(before, plasmalogin="disabled")
+            require(after == expected and running_sddm() == process, "installer changed SDDM PID or manager selectors")
+            protected = protected_snapshot()
+            introduced = {"/var/lib/plasmalogin", "/var/lib/plasmalogin/state.conf", "/run/plasmalogin", *files}
+            require({k: v for k, v in protected.items() if k not in introduced} ==
+                    {k: v for k, v in state["protected"].items() if k not in introduced},
+                    "installer changed protected authentication/SDDM/configuration paths")
+            require(invoking_account(uid) == state["invoking_account"], "installer changed invoking account or groups")
+            require(debconf("plasmalogin", "GET plasmalogin/daemon_name") == "/usr/bin/plasmalogin", "wrong Debian daemon registration")
+            require("plasmalogin" in [owner.strip() for owner in debconf("plasmalogin", f"METAGET {QUESTION} owners").split(",")],
+                    "PLM is not a debconf owner")
+            inspect_packages(bundle, inventory, bundle, installed=True)
+            check_config_sources(groups)
+            atomic(CONFIG, configured.encode(), 0o644)
+            require(read_regular(CONFIG, 0) == configured.encode(), "PLM configuration bytes changed after atomic write")
+            readback = {}
+            for group, values in groups.items():
+                arguments = [argument for part in re.findall(r"\[([^\[\]]+)\]", group) for argument in ("--group", part)]
+                readback[group] = {}
+                for key, expected_value in values.items():
+                    actual = run("kreadconfig6", "--file", CONFIG, *arguments, "--key", key,
+                                 "--default", "__ARASAKA_PLM_MISSING__").removesuffix("\n")
+                    require(actual == expected_value, f"KConfig readback differs: {group}/{key}: {actual!r}")
+                    readback[group][key] = actual
+            save_json(backup / "config-readback.json", readback)
+            save_json(backup / "runtime-inspection.json", verify_runtime(inventory, files))
+            require(selectors() == expected and running_sddm() == process, "manager changed before selection")
+            debconf("plasmalogin", f"SET {QUESTION} plasmalogin")
+            debconf("plasmalogin", f"FSET {QUESTION} seen true")
+            atomic(DEFAULT, b"/usr/bin/plasmalogin\n", 0o644)
+            run("systemctl", "disable", "sddm.service")
+            run("systemctl", "enable", "--force", "plasmalogin.service")
+            run("systemctl", "daemon-reload")
+            selected = selectors()
+            require(selected["default"] == "/usr/bin/plasmalogin\n" and selected["debconf"] == "plasmalogin"
+                    and selected["seen"] == "true" and selected["sddm"] == "disabled" and selected["plasmalogin"] == "enabled"
+                    and set(selected["links"]) == {str(ALIAS)} and ALIAS.resolve() == Path("/usr/lib/systemd/system/plasmalogin.service"),
+                    f"incoherent next-boot selection: {selected}")
+            require(running_sddm() == process, "running SDDM changed during selection")
+            save_json(backup / "selected.json", selected)
+            atomic(backup / "packages-after-install.tsv", package_inventory().encode())
+            recovery_command(backup)
+            print("PLM and shader configured, selected for next boot; activation pending reboot.", flush=True)
+            print("No reboot requested or performed. Authentication and shader rendering require actual post-reboot observation.", flush=True)
+        except BaseException as failure:
+            recovery_error = None
+            try:
+                restore(backup)
+            except BaseException as error:
+                recovery_error = str(error)
+            try:
+                save_json(backup / "migration-failure.json", {"error": str(failure), "recovery_error": recovery_error})
+            except Exception:
+                pass
+            recovery_notice("Migration failed; automatic selector/configuration recovery was attempted without stopping services.", error=True)
+            if recovery_error is not None:
+                recovery_notice(f"AUTOMATIC RECOVERY INCOMPLETE: {recovery_error}", error=True)
+            recovery_command(backup, best_effort=True)
+            raise
+    finally:
+        os.close(lock)
+
+
+def prepare(args):
+    require(os.geteuid() != 0, "run ./bin/apply-plm as the desktop user; root never builds/captures")
+    user = pwd.getpwuid(os.getuid())
+    home = Path(user.pw_dir)
+    require(Path.home() == home and os.environ.get("XDG_SESSION_TYPE") == "wayland", "run from the invoking user's Plasma Wayland session")
+    repo = Path(__file__).absolute().parents[1]
+    baseline, files, desktop = baseline_capture(home, args.baseline)
+    if not args.skip_build:
+        print("Building both login packages unprivileged; build dependencies must already be installed.", flush=True)
+        subprocess.run([str(repo / "bin/build-plm")], check=True)
+    output = safe_path(repo / "build/plm", owner=os.getuid())
+    with safe_path(output / ".build.lock", owner=os.getuid()).open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        inventory = json.loads(read_regular(output / "inventory.json", os.getuid()))
+        inspect_packages(output, inventory, output)
+        prepared = Path(tempfile.mkdtemp(prefix="plm-prepared-", dir=baseline.parent))
+        names = ["inventory.json"]
+        names.extend(f"{name}_{version}_amd64.deb" for name, version in PACKAGES.items())
+        names.extend(f"{name}.{suffix}" for name in PACKAGES for suffix in ("info", "contents", "scripts.json"))
+        for name in names:
+            (prepared / name).write_bytes(read_regular(output / name, os.getuid()))
+        audit = Path(args.baseline).absolute() if args.baseline else baseline
+        for name in BASELINE_FILES:
+            if (audit / name).exists():
+                (prepared / name).write_bytes(read_regular(audit / name, os.getuid()))
+                names.append(name)
+        for name in INVOCATION_FILES:
+            (prepared / f"invocation-{name}").write_bytes(read_regular(baseline / name, os.getuid()))
+            names.append(f"invocation-{name}")
+        request = {"uid": os.getuid(), "user": user.pw_name,
+                   "files": {name: digest(read_regular(prepared / name)) for name in names}}
+        save_json(prepared / "request.json", request)
+    check_user_preservation(home, files, desktop, "during build/preparation; review before installation")
+    command = ["sudo", "/usr/bin/python3", "-I", "-B", str(repo / "bin/apply-plm"), "--root-apply", str(prepared)]
+    print("Prepared artifacts and evidence: " + str(prepared), flush=True)
+    print("Privileged installation/selection command: " + shlex.join(command), flush=True)
+    result = subprocess.run(command)
+    check_user_preservation(home, files, desktop, "after the root subprocess; inspect before reboot")
+    require(result.returncode == 0, "privileged migration failed; see protected backup/recovery command above")
+    print("Desktop shader and file digests match this invocation's baseline, not a claim about the historical audit.", flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--skip-build", action="store_true", help="use and re-inspect both existing artifact hashes instead of rebuilding")
+    parser.add_argument("--baseline", help="prior read-only baseline (preserves dependency provenance when available)")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--rollback", metavar="BACKUP", help="restore recorded selection/configuration; never remove packages or restart services")
+    modes.add_argument("--root-apply", help=argparse.SUPPRESS)
+    modes.add_argument("--root-rollback", help=argparse.SUPPRESS)
+    modes.add_argument("--apt-guard", help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    internal = args.root_apply or args.root_rollback or args.apt_guard
+    require(not ((internal or args.rollback) and (args.skip_build or args.baseline)), "preparation flags cannot be combined with recovery/internal modes")
+    if args.rollback:
+        path = Path(args.rollback).absolute()
+        require(path.parent == BACKUPS and re.fullmatch(r"plm-[a-zA-Z0-9_-]+", path.name), "invalid backup path")
+        if os.geteuid() == 0:
+            backup_path(path)
+            read_regular(path / "rollback.sh", 0)
+            os.execv(str(path / "rollback.sh"), [str(path / "rollback.sh")])
+        command = ["sudo", "/usr/bin/python3", "-I", "-B", str(Path(__file__).absolute()), "--rollback", str(path)]
+        print("Privileged recovery command: " + shlex.join(command), flush=True)
+        sys.exit(subprocess.call(command))
+    if internal:
+        require(os.geteuid() == 0 and sys.flags.isolated, "internal entry requires root and isolated system Python")
+        os.umask(0o077)
+        sudo_uid = os.environ.get("SUDO_UID", "0")
+        os.environ.clear()
+        os.environ.update(PATH="/usr/sbin:/usr/bin:/sbin:/bin", HOME="/root", LC_ALL="C", SUDO_UID=sudo_uid,
+                          DEBIAN_FRONTEND="noninteractive", NEEDRESTART_MODE="l", SYSTEMD_PAGER="cat")
+        os.chdir("/")
+        if args.root_apply:
+            for signum in (signal.SIGTERM, signal.SIGHUP):
+                signal.signal(signum, lambda sig, frame: (_ for _ in ()).throw(InterruptedError(f"signal {sig}")))
+            root_apply(args.root_apply)
+        else:
+            backup = backup_path(args.root_rollback or args.apt_guard)
+            require(Path(__file__).absolute() == backup / "helper.py", "recovery/guard only runs from root-owned backup helper")
+            read_regular(backup / "helper.py", 0)
+            if args.apt_guard:
+                apt_guard(backup)
+            else:
+                lock = migration_lock()
+                try:
+                    restore(backup)
+                finally:
+                    os.close(lock)
+    else:
+        prepare(args)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, KeyError, tarfile.TarError, subprocess.CalledProcessError, KeyboardInterrupt) as error:
+        recovery_notice(f"error: {error}", error=True)
+        sys.exit(1)

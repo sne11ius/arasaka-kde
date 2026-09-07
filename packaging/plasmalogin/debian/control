@@ -1,0 +1,68 @@
+Source: plasmalogin
+Section: x11
+Priority: optional
+Maintainer: Arasaka KDE Maintainers <maintainers@arasaka-kde.invalid>
+Build-Depends: debhelper-compat (= 13),
+ cmake (>= 3.22),
+ extra-cmake-modules (>= 6.26),
+ pkgconf,
+ qt6-base-dev (>= 6.10),
+ qt6-declarative-dev (>= 6.10),
+ qt6-tools-dev,
+ qt6-tools-dev-tools,
+ qt6-shadertools-dev,
+ libkf6auth-dev (>= 6.26),
+ libkf6config-dev (>= 6.26),
+ libkf6coreaddons-dev (>= 6.26),
+ libkf6dbusaddons-dev (>= 6.26),
+ libkf6i18n-dev (>= 6.26),
+ libkf6kcmutils-dev (>= 6.26),
+ libkf6kio-dev (>= 6.26),
+ libkf6package-dev (>= 6.26),
+ libkf6windowsystem-dev (>= 6.26),
+ libkscreen-dev (>= 4:6.7),
+ liblayershellqtinterface-dev (>= 6.7),
+ libplasma-dev (>= 6.7),
+ plasma-workspace-dev (>= 4:6.7),
+ libpam0g-dev,
+ libsystemd-dev,
+ systemd-dev,
+ libx11-dev,
+ libxau-dev
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
+Homepage: https://invent.kde.org/plasma/plasma-login-manager
+
+Package: plasmalogin
+Architecture: amd64
+Provides: x-display-manager
+Depends: ${shlibs:Depends}, ${misc:Depends},
+ debconf (>= 0.5) | debconf-2.0,
+ dbus-user-session,
+ kwin-wayland (>= 4:6.7),
+ plasma-workspace (>= 4:6.7),
+ plasma-keyboard (>= 6.7),
+ plasma-desktoptheme (>= 6.7),
+ polkitd,
+ systemd,
+ libpam-modules,
+ libpam-runtime,
+ libpam-systemd,
+ qt6-wayland,
+ qml6-module-qtqml-workerscript,
+ qml6-module-qtquick,
+ qml6-module-qtquick-controls,
+ qml6-module-qtquick-layouts,
+ qml6-module-qtquick-window,
+ qml6-module-qt5compat-graphicaleffects,
+ qml6-module-org-kde-breeze-components (>= 4:6.7),
+ qml6-module-org-kde-plasma-workspace (>= 4:6.7),
+ qml6-module-org-kde-kirigami (>= 6.26),
+ qml6-module-org-kde-kcmutils (>= 6.26),
+ qml6-module-org-kde-kitemmodels (>= 6.26)
+Recommends: libpam-kwallet5
+Description: Plasma Login Manager, locally packaged without activation
+ Plasma's Wayland login greeter, wallpaper host, daemon, PAM integration,
+ and System Settings module. This preparation package does not select a
+ display manager or start, stop, enable, or restart services. Selection and
+ activation require a separate, explicit administrative operation.

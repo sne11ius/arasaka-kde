@@ -1,0 +1,17 @@
+etc/pam.d/plasmalogin*
+usr/bin/*
+usr/lib/*/qt6/plugins/plasma/kcms/systemsettings/kcm_plasmalogin.so
+usr/lib/systemd/system/plasmalogin.service
+usr/lib/systemd/user/plasma-login*
+usr/lib/systemd/user/plasma-wallpaper.service
+usr/lib/sysusers.d/plasmalogin.conf
+usr/lib/tmpfiles.d/plasmalogin.conf
+usr/lib/*/libexec/plasmalogin-helper*
+usr/lib/*/libexec/plasma-login-greeter
+usr/lib/kf6/kauth/libexec/kcmplasmalogin_authhelper
+usr/share/applications/kcm_plasmalogin.desktop
+usr/share/dbus-1/system.d/*
+usr/share/dbus-1/system-services/*
+usr/share/locale/*/LC_MESSAGES/*.mo
+usr/share/plasmalogin/*
+usr/share/polkit-1/actions/*

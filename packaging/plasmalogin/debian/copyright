@@ -1,0 +1,25 @@
+Upstream-Name: Plasma Login Manager
+Source: https://download.kde.org/stable/plasma/6.7.4/plasma-login-manager-6.7.4.tar.xz
+
+Copyright and license notices are retained from the pinned upstream source.
+The daemon and authentication code derive from SDDM, copyright 2013-2015
+Abdurrahman AVCI, 2013-2014 Alexey Rochev, 2013-2014 Jerome Leclanche, and
+other contributors named in the sources. Frontend contributors include
+David Edmundson, Oliver Beard, Aleix Pol Gonzalez, David Redondo,
+Martin Grasslin, Kevin Ottens, and other KDE contributors.
+
+Upstream files use GPL-2.0-or-later, GPL-2.0-only OR GPL-3.0-only OR
+LicenseRef-KDE-Accepted-GPL, GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL,
+LGPL-2.0-or-later, LGPL-2.1-or-later, BSD-3-Clause, CC0-1.0, and CC-BY-3.0.
+The upstream LICENSE, LICENSE.CC-BY-3.0 and complete LICENSES directory are
+installed alongside this file. SOURCE-NOTICES.txt preserves the original
+source-file copyright and licensing headers with their paths.
+
+Debian packaging: Copyright 2026 Arasaka KDE contributors, GPL-2.0-or-later.
+Debconf registration is adapted from Debian SDDM's xdm-derived configuration
+script, Copyright 2000-2001 Branden Robinson, GPL version 2. Its GPL notices
+are retained in the script. Prompting, selection, default-file replacement,
+service enablement, starting, stopping, and restart behavior are omitted.
+
+On Debian systems, the complete GNU GPL version 2 and 3 texts are also
+available in /usr/share/common-licenses/GPL-2 and GPL-3.

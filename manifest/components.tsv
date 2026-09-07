@@ -1,4 +1,5 @@
 name	version	url	sha256	filename
+plasma-login-manager	6.7.4	https://download.kde.org/stable/plasma/6.7.4/plasma-login-manager-6.7.4.tar.xz	8ba5f9a5b31b2cb09d6846c590d09891dadb9a5625426b8552577299093b67fd	plasma-login-manager-6.7.4.tar.xz
 panel-colorizer	v8.0.0	https://github.com/luisbocanegra/plasma-panel-colorizer/releases/download/v8.0.0/plasmoid-panel-colorizer-v8.0.0.plasmoid	93f737af4d6291f2c84800090258c77511270817d7a5ecc56de45a6af966b2ee	plasmoid-panel-colorizer-v8.0.0.plasmoid
 polonium	v1.2.1	https://github.com/zeroxoneafour/polonium/releases/download/v1.2.1/polonium.kwinscript	1f7cd126d4341761fde0e0d82f277118030dc372b734825d6b1edf3d41b6bd85	polonium.kwinscript
 smart-video	v2.14.1	https://github.com/luisbocanegra/plasma-smart-video-wallpaper-reborn/releases/download/v2.14.1/plasma-smart-video-wallpaper-reborn-v2.14.1.tar.gz	7ac3c392942f40013622880a2ac1333734e1d63ac12cc0a73e54753d412789ca	plasma-smart-video-wallpaper-reborn.tar.gz

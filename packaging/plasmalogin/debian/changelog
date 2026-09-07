@@ -1,0 +1,6 @@
+plasmalogin (6.7.4-0arasaka1) unstable; urgency=medium
+
+  * Package pinned upstream PLM for local, non-disruptive preparation.
+  * Preserve display-manager selection and debconf seen state.
+
+ -- Arasaka KDE Maintainers <maintainers@arasaka-kde.invalid>  Mon, 07 Sep 2026 12:00:00 +0000

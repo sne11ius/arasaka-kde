@@ -23,9 +23,122 @@ applications. It requires the shader build prerequisites listed below and assume
 the required fonts, applets, Kvantum theme, and native KWin plugins are already
 installed. Full dependency provisioning is still unfinished.
 
-**There is no dry-run or transactional snapshot/rollback implementation yet.**
+**There is no full-desktop dry-run or transactional snapshot/rollback implementation yet.**
 `apply-live` does not accept a `--dry-run` flag. Existing backups are component
 specific, not a complete desktop recovery system.
+
+## Login Screen
+
+**Current status (2026-09-07): PLM is installed, selected, and running.**
+After the user-run installation and reboot, service state and logs confirmed the
+existing account entered Plasma Wayland; the user confirmed the login appearance.
+SDDM remains installed but disabled for recovery. The user runs privileged
+commands directly; agents must not invoke `pkexec`.
+
+This migration targets TUXEDO OS on Debian testing/forky, amd64, with Qt 6.10.2,
+Frameworks 6.28 and Plasma 6.7. It does not import Neon packages or repositories.
+PLM uses its own login UI, not the retained SDDM Arasaka QML theme. The login
+background is independently configured as Heartfelt No Heart at 30 FPS, 75%
+speed, full resolution, with the 16:9 Mikoshi texture and `pauseMode=3`.
+Autologin stays disabled. Desktop shader selections, per-screen textures, window
+pausing, gallery/favorites, launcher, KWin, and lock screen are left alone.
+
+The login clock is disabled with `[Greeter] ShowClock=false`; this does not change
+the lock-screen clock. `apply-plm` includes it in new installations. On the current
+installation, the setting is in the root-owned, mode-644 file
+`/etc/plasmalogin.conf.d/arasaka-clock.conf`. Its separate location leaves the
+original migration-managed configuration and rollback snapshot unchanged.
+Configuration readback confirms `false`; the clock-free appearance takes effect
+when the greeter next starts and has not yet been visually confirmed.
+
+To apply that preference to an existing installation without rerunning migration:
+
+```sh
+sudo install -d -m 755 /etc/plasmalogin.conf.d
+sudo kwriteconfig6 --file /etc/plasmalogin.conf.d/arasaka-clock.conf \
+  --group Greeter --key ShowClock --type bool false
+sudo chmod 0644 /etc/plasmalogin.conf.d/arasaka-clock.conf
+```
+
+The final permission step is required because `kwriteconfig6` creates new files
+as root-only. Do not restart the display manager from the running desktop.
+
+Build unprivileged:
+
+```sh
+./bin/build-plm
+```
+
+The outputs are `build/plm/plasmalogin_6.7.4-0arasaka1_amd64.deb` and
+`build/plm/arasaka-login-wallpaper_1.0-1_amd64.deb`, alongside `inventory.json`,
+package metadata, file lists and inspected maintainer scripts. `--plm-only`
+builds just PLM. The official 6.7.4 archive is SHA-256-pinned in the manifest;
+builds use `DEB_BUILD_OPTIONS=nocheck` and `BUILD_TESTING=OFF`. No tests or
+synthetic greeter previews are part of this migration.
+
+Build dependencies are declared in `packaging/plasmalogin/debian/control`; also
+install `build-essential`, `dpkg-dev`, and the shader prerequisites below.
+`systemd-dev` is required in addition to `libsystemd-dev`. Build tools never
+install dependencies. Simulate dependency changes first and do not proceed with
+desktop removals/upgrades. The user installed the build dependencies. The login
+transaction installed the two local packages, `plasma-keyboard` and
+`qt6-virtualkeyboard-plugin`, without upgrades/removals.
+
+For a fresh SDDM-to-PLM migration, run this yourself **as the desktop user inside
+Plasma Wayland, without a leading `sudo`**. Do not rerun it on this already
+migrated machine:
+
+```sh
+./bin/apply-plm --skip-build
+```
+
+`--skip-build` uses and re-inspects the existing artifacts, not unverified files.
+Without it, the command rebuilds both packages first. `--baseline` preserves the
+private audit record supplied as a path and dependency history; omit it to create a new
+baseline. The recorded pre-dependency installed-package inventory was explicitly
+reconstructed from APT history because the user installed dependencies before
+the original complete snapshot. A fresh invocation captures its own desktop/file
+digests and reports differences from historical observations without resetting
+user settings. Changed shader appearance requires review before continuing.
+
+The command prints and invokes a scoped `sudo` installation step after
+unprivileged preparation. Before installing, it creates a root-owned mode-700
+backup under `/var/backups/arasaka-kde/plm-*`, including selectors, relevant
+configuration, package inventories and executable standalone `rollback.sh`.
+The current protected backup is `/var/backups/arasaka-kde/plm-q3fl2q9u`.
+APT rechecks the transaction and installs explicit protected copies of the two
+packages. Package maintainer scripts do not start, stop, enable, or select a
+display manager. The controller verifies account/PAM/assets and configuration,
+then coordinates debconf, `/etc/X11/default-display-manager`, and the systemd
+alias for the next boot. It never stops SDDM or reboots the session.
+
+The system wallpaper package owns
+`/usr/share/plasma/wallpapers/online.knowmad.shaderwallpaper/`, including its
+embedded native QML module, and `/usr/share/wallpapers/Arasaka/`. These root-owned
+assets need no private-home access. The existing user-local plugin keeps its
+normal precedence for desktop sessions. The package preserves upstream licenses,
+shader headers, gallery attribution and local adaptation patches.
+
+For this installation, the standalone TTY recovery command is:
+
+```sh
+sudo /var/backups/arasaka-kde/plm-q3fl2q9u/rollback.sh
+```
+
+With the checkout available, `./bin/apply-plm --rollback BACKUP` accepts that same
+backup path. A different migration has its own printed path. Recovery restores
+selectors and migration-owned configuration,
+not user settings, and leaves packages installed. PLM is disabled for the next
+boot; the running service is unchanged. If PLM is already running, you must
+explicitly reboot to return to SDDM. Keep SDDM and its theme installed. This is a
+one-shot migration: pre-existing or partially installed PLM packages/accounts
+require inspection, not a forced rerun or autoremove.
+
+The current migration has crossed the reboot boundary and successful login was
+observed. Standalone rollback has not been exercised. Future migrations must still
+distinguish next-boot selection from actual login and rendering. Do not run
+`apply-live`, `apply-launcher`, or desktop shader activation as part of migration.
+See `TODO.md` for the completion record and remaining clock-appearance check.
 
 ## Launcher
 
@@ -232,6 +345,12 @@ Heartfelt No Heart again without discarding the gallery.
 ./bin/apply-shader-wallpaper --install-only
 ./bin/apply-shader-wallpaper
 ```
+
+For independent system packaging, `./bin/apply-shader-wallpaper --stage-only DEST`
+exports to an absolute empty/nonexistent directory with final `/usr/share` URLs.
+It is mutually exclusive with `--install-only`, rejects symlinked output paths,
+and skips user-gallery merging, home deployment/backups, and all session calls.
+`build-plm` uses this mode; neither existing desktop mode changes its behavior.
 
 Run as the desktop user, without `sudo`. The first command builds, validates,
 backs up, and installs artifacts without any live session calls. The default

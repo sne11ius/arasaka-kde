@@ -31,9 +31,23 @@ in `LICENSES/GPL-3.0-or-later.txt` and installed with both effects.
 @y4my4my4m (@y4my4m), licensed under GPL-3.0-or-later. Commit
 `6a8c01eb7c3a47a0991707561da737b365553247` is pinned with its source archive hash
 in `manifest/components.tsv`. The user-local package includes upstream's
-`LICENSE`; its native plugin is built into the package, not installed system-wide.
+`LICENSE`; its native plugin is embedded in that wallpaper package. The separate
+`arasaka-login-wallpaper` Debian package builds the same pinned renderer into an
+independent system-wide wallpaper package without copying the user's gallery.
 Bundled shaders retain their individual licenses rather than inheriting the
 wallpaper engine's GPL license.
+
+[Plasma Login Manager](https://invent.kde.org/plasma/plasma-login-manager) 6.7.4 is
+by KDE contributors, with daemon/authentication code derived from SDDM by
+Abdurrahman AVCI, Alexey Rochev, Jerome Leclanche and other upstream contributors.
+The official release archive is pinned in `manifest/components.tsv`. Local Debian
+packaging under `packaging/plasmalogin/debian/` is GPL-2.0-or-later; its debconf
+registration retains Branden Robinson's GPL-2 Debian xdm/SDDM script notice.
+The local package includes upstream `LICENSE`, `LICENSE.CC-BY-3.0`, the complete
+`LICENSES/` directory and source-header copyright/license notices under
+`/usr/share/doc/plasmalogin/`. Per-file GPL, LGPL, BSD, CC0 and CC-BY terms remain
+in effect; see the package's `copyright` file rather than assigning one license
+to all upstream materials. PLM's UI does not reuse this project's SDDM QML layout.
 
 **Heartfelt** is by Martijn Steinrucken, aka BigWings (2017), under
 [Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported](https://creativecommons.org/licenses/by-nc-sa/3.0/).

@@ -1,0 +1,53 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@ --buildsystem=cmake --builddirectory=obj-build --max-parallel=4
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_SYSCONFDIR=/etc \
+		-DCMAKE_INSTALL_LOCALSTATEDIR=/var \
+		-DPAM_CONFIG_DIR=/etc/pam.d \
+		-DPAM_OS_CONFIGURATION=debian \
+		-DINSTALL_PAM_CONFIGURATION=ON \
+		-DDBUS_CONFIG_FILENAME=plasmalogin_org.freedesktop.DisplayManager.conf \
+		-DBUILD_TESTING=OFF
+
+override_dh_auto_install:
+	dh_auto_install --destdir=debian/tmp
+
+# No test target is invoked, even outside the build-plm entry point.
+override_dh_auto_test:
+
+# Upstream installs the units and definitions. Generate no lifecycle snippets:
+# --no-start alone does not suppress stopping units on package removal.
+override_dh_installsystemd:
+	dh_installsystemd --no-scripts --no-enable --no-start --no-restart-after-upgrade
+
+override_dh_installsystemduser:
+	dh_installsystemduser --no-scripts --no-enable
+
+override_dh_installsysusers:
+	dh_installsysusers --no-scripts
+
+override_dh_installtmpfiles:
+# dh_installtmpfiles 14.3 ignores --no-scripts for its postinst block.
+# CMake installs the file; postinst explicitly creates state after sysusers.
+
+override_dh_installdebconf:
+	dh_installdebconf --no-scripts
+
+override_dh_installdocs:
+	dh_installdocs LICENSE LICENSE.CC-BY-3.0 LICENSES debian/SOURCE-NOTICES.txt
+
+override_dh_strip:
+	dh_strip --no-automatic-dbgsym
+
+override_dh_dwz:
+
+override_dh_missing:
+	dh_missing --fail-missing

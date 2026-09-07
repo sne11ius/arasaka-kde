@@ -1,0 +1,330 @@
+#!/usr/bin/env python3
+"""Build and inspect local login packages; never install or activate them."""
+
+import argparse
+import csv
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import shlex
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+
+
+VERSION = "6.7.4-0arasaka1"
+SOURCE = "plasma-login-manager-6.7.4"
+PLUGIN = "online.knowmad.shaderwallpaper"
+
+
+def run(*command, cwd=None, env=None, log=None):
+    print("+ " + shlex.join(map(str, command)), flush=True)
+    result = subprocess.run(command, cwd=cwd, env=env, text=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if log:
+        Path(log).write_text(result.stdout)
+    if result.returncode:
+        print("\n".join(result.stdout.splitlines()[-30:]) if log else result.stdout, file=sys.stderr)
+        if log:
+            print(f"Full command output: {log}", file=sys.stderr)
+        raise subprocess.CalledProcessError(result.returncode, command)
+    return result.stdout
+
+
+def check_path(path):
+    if not path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"unsafe path: {path}")
+    for part in (path, *path.parents):
+        if part.is_symlink():
+            raise ValueError(f"refusing symlink: {part}")
+
+
+def extract_source(archive, destination):
+    omitted = []
+    with tarfile.open(archive, "r:xz") as tar:
+        accepted = []
+        names = set()
+        for member in tar.getmembers():
+            path = PurePosixPath(member.name)
+            if (path.is_absolute() or ".." in path.parts or not path.parts
+                    or path.parts[0] != SOURCE or str(path) in names):
+                raise ValueError(f"unsafe or duplicate archive path: {member.name}")
+            names.add(str(path))
+            # The pinned archive's non-Debian PAM alias is deliberately NOT
+            # extracted or followed. No other links (including hardlinks) pass.
+            if (str(path) == f"{SOURCE}/data/pam/kde-linux"
+                    and member.issym() and member.linkname == "arch"):
+                omitted.append({"path": member.name, "link": member.linkname})
+                continue
+            if not (member.isfile() or member.isdir()):
+                raise ValueError(f"archive link or special file rejected: {member.name}")
+            accepted.append(member)
+        tar.extractall(destination, members=accepted, filter="data")
+    return omitted
+
+
+def qml_imports(source):
+    imports = {}
+    for path in sorted(source.rglob("*.qml")):
+        for module in re.findall(r"^\s*import\s+([A-Za-z][\w.]*)", path.read_text(), re.MULTILINE):
+            imports.setdefault(module, []).append(str(path.relative_to(source)))
+    return imports
+
+
+def inspect_package(package, output, work):
+    name = run("dpkg-deb", "--field", str(package), "Package").strip()
+    info = run("dpkg-deb", "--info", str(package), log=output / f"{name}.info")
+    run("dpkg-deb", "--contents", str(package), log=output / f"{name}.contents")
+    control = work / f"{name}-control"
+    run("dpkg-deb", "--control", str(package), str(control))
+    scripts = {p.name: p.read_text() for p in control.iterdir()
+               if p.name in {"config", "preinst", "postinst", "prerm", "postrm", "templates", "conffiles"}}
+    (output / f"{name}.scripts.json").write_text(json.dumps(scripts, indent=2) + "\n")
+    for filename, content in scripts.items():
+        if filename in {"templates", "conffiles"}:
+            continue
+        if re.search(r"\b(?:invoke-rc\.d|deb-systemd-invoke|deb-systemd-helper|update-rc\.d)\b", content):
+            # Comments may explain the forbidden operations but cannot run them.
+            active = "\n".join(line for line in content.splitlines() if not line.lstrip().startswith("#"))
+            if re.search(r"\b(?:invoke-rc\.d|deb-systemd-invoke|deb-systemd-helper|update-rc\.d)\b", active):
+                raise ValueError(f"disruptive lifecycle helper in {name}/{filename}")
+        for line in content.splitlines():
+            if "systemctl" in line and not line.lstrip().startswith("#"):
+                if line.strip() != "systemctl --system daemon-reload":
+                    raise ValueError(f"unexpected systemctl action in {name}/{filename}: {line}")
+
+    # Normalize ownership only through verified standard merged-/usr aliases.
+    # Neither arbitrary links nor links at their targets are safe exceptions.
+    aliases = {}
+    for basename in ("bin", "sbin", "lib", "lib64"):
+        alias = Path("/") / basename
+        target = Path("/usr") / basename
+        if (stat.S_ISDIR(Path("/usr").lstat().st_mode)
+                and alias.is_symlink() and os.readlink(alias) in (str(target), f"usr/{basename}")
+                and target.is_dir() and not target.is_symlink()):
+            aliases[str(alias)] = str(target)
+
+    def canonical(path):
+        for alias, target in aliases.items():
+            if path == alias or path.startswith(alias + "/"):
+                return target + path[len(alias):]
+        return path
+
+    owners = {}
+    for listing in Path("/var/lib/dpkg/info").glob("*.list"):
+        owner = listing.stem.split(":")[0]
+        for path in listing.read_text().splitlines():
+            owners.setdefault(canonical(path), set()).add(owner)
+    payload = work / f"{name}-payload.tar"
+    with payload.open("wb") as stream:
+        subprocess.run(["dpkg-deb", "--fsys-tarfile", str(package)], stdout=stream, check=True)
+    files = []
+    directory_count = 0
+    wallpaper_roots = tuple(map(PurePosixPath, (
+        f"/usr/share/plasma/wallpapers/{PLUGIN}",
+        "/usr/share/wallpapers/Arasaka", "/usr/share/doc/arasaka-login-wallpaper")))
+    with tarfile.open(payload) as tar:
+        for member in tar:
+            path = PurePosixPath(member.name)
+            if path.is_absolute() or ".." in path.parts:
+                raise ValueError(f"unsafe package path: {member.name}")
+            if member.uid != 0 or member.gid != 0:
+                raise ValueError(f"non-root package ownership: {member.name}")
+            if not (member.isdir() or member.isfile()):
+                raise ValueError(f"package link or special file: {member.name}")
+            if path.parts and path.parts[0] not in {"etc", "usr"}:
+                raise ValueError(f"unexpected package boundary: {member.name}")
+            destination = Path("/") / path
+            if not path.parts and not member.isdir():
+                raise ValueError("package root must be a directory")
+            if name == "arasaka-login-wallpaper" and not any(
+                    root in destination.parents or (member.isdir()
+                    and (destination == root or destination in root.parents)) for root in wallpaper_roots):
+                raise ValueError(f"unexpected wallpaper package boundary: {destination}")
+            # Check parents first with lstat, so a missing tar directory entry
+            # cannot hide a symlink redirect or a non-directory ancestor.
+            for component in (*reversed(destination.parents), destination):
+                try:
+                    mode = component.lstat().st_mode
+                except FileNotFoundError:
+                    continue
+                needs_directory = component != destination or member.isdir()
+                if stat.S_ISLNK(mode) and needs_directory and str(component) in aliases:
+                    continue
+                if not (stat.S_ISDIR(mode) if needs_directory else stat.S_ISREG(mode)):
+                    claimed = sorted(owners.get(canonical(str(component)), set()))
+                    raise ValueError(f"destination type collision: {component} ({stat.filemode(mode)}; "
+                                     f"owners: {claimed or ['unowned']})")
+            if member.isdir():
+                directory_count += 1
+                continue
+            absolute = str(destination)
+            if (path.suffix in {".a", ".h", ".hpp", ".cmake", ".pc", ".debug", ".o", ".cpp"}
+                    or "/include/" in absolute or "/cmake/" in absolute or "/lib/debug/" in absolute):
+                raise ValueError(f"development-only payload: {absolute}")
+            collisions = owners.get(canonical(absolute), set()) - {name}
+            if collisions:
+                raise ValueError(f"package file collision: {absolute}: {sorted(collisions)}")
+            files.append(absolute)
+    if name == "plasmalogin":
+        required = {"/usr/bin/plasmalogin", "/etc/pam.d/plasmalogin",
+                    "/etc/pam.d/plasmalogin-autologin", "/etc/pam.d/plasmalogin-greeter",
+                    "/usr/lib/systemd/system/plasmalogin.service",
+                    "/usr/lib/sysusers.d/plasmalogin.conf", "/usr/lib/tmpfiles.d/plasmalogin.conf",
+                    "/usr/share/dbus-1/system.d/plasmalogin_org.freedesktop.DisplayManager.conf"}
+        if not required.issubset(files) or "prerm" in scripts or "preinst" in scripts:
+            raise ValueError("PLM payload or lifecycle script boundary differs from the preparation contract")
+        if re.search(r"^ (?:Conflicts|Replaces):", info, re.MULTILINE):
+            raise ValueError("PLM must coexist with SDDM")
+    elif name == "arasaka-login-wallpaper":
+        if scripts:
+            raise ValueError("wallpaper package must not contain lifecycle scripts or conffiles")
+    return {"package": package.name, "sha256": hashlib.sha256(package.read_bytes()).hexdigest(),
+            "files": files, "file_count": len(files), "directory_count": directory_count,
+            "collisions": [], "root_owned": True}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--plm-only", action="store_true", help="do not stage/build the login wallpaper package")
+    args = parser.parse_args()
+    if os.geteuid() == 0:
+        raise ValueError("build-plm must run unprivileged")
+    repo = Path(__file__).resolve().parents[1]
+    output = repo / "build/plm"
+    check_path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    for child in output.iterdir():
+        check_path(child)
+    with (output / ".build.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if run("dpkg", "--print-architecture").strip() != "amd64":
+            raise ValueError("these local packages require native amd64")
+        work = Path(tempfile.mkdtemp(prefix="work-", dir=output))
+        print(f"Build workspace and logs: {work}", flush=True)
+        manifest = list(csv.DictReader((repo / "manifest/components.tsv").open(), delimiter="\t"))
+        pin = next(row for row in manifest if row["name"] == "plasma-login-manager")
+        if pin["version"] != "6.7.4" or pin["filename"] != f"{SOURCE}.tar.xz":
+            raise ValueError("PLM manifest pin and Debian packaging version disagree")
+        archive = Path(run(str(repo / "bin/fetch-components"), "plasma-login-manager").strip().splitlines()[-1])
+        if hashlib.sha256(archive.read_bytes()).hexdigest() != pin["sha256"]:
+            raise ValueError("PLM source checksum mismatch")
+        omitted = extract_source(archive, work)
+        source = work / SOURCE
+        packaging = repo / "packaging/plasmalogin/debian"
+        for path in (packaging, *packaging.rglob("*")):
+            check_path(path)
+        shutil.copytree(packaging, source / "debian")
+        notices = []
+        for path in sorted(source.rglob("*")):
+            if not path.is_file() or "debian" in path.relative_to(source).parts:
+                continue
+            try:
+                text = path.read_text()
+            except UnicodeDecodeError:
+                continue
+            if "SPDX-" in text or re.search(r"copyright", text, re.IGNORECASE):
+                # Preserve original headers verbatim, including multiline license grants.
+                notices.append(f"\n=== {path.relative_to(source)} ===\n" + "\n".join(text.splitlines()[:80]) + "\n")
+        (source / "debian/SOURCE-NOTICES.txt").write_text("".join(notices))
+        env = dict(os.environ, DEB_BUILD_OPTIONS="nocheck", DEB_BUILD_PROFILES="nocheck", LC_ALL="C.UTF-8")
+        run("dpkg-buildpackage", "-b", "-us", "-uc", cwd=source, env=env, log=work / "plm-build.log")
+        package = work / f"plasmalogin_{VERSION}_amd64.deb"
+        inventory = {"source": pin, "source_directory": str(source), "omitted_archive_links": omitted,
+                     "build_command": "DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b -us -uc",
+                     "build_profiles": env["DEB_BUILD_PROFILES"],
+                     "plm_qml_imports": qml_imports(source / "src"), "packages": []}
+        inventory["packages"].append(inspect_package(package, output, work))
+        for path in work.iterdir():
+            if path.suffix in {".deb", ".buildinfo", ".changes"}:
+                shutil.copy2(path, output / path.name)
+        (output / "inventory.json").write_text(json.dumps(inventory, indent=2) + "\n")
+
+        if not args.plm_only:
+            stage = work / "wallpaper-root"
+            stage.mkdir()
+            run(str(repo / "bin/apply-shader-wallpaper"), "--stage-only", str(stage),
+                log=work / "wallpaper-build.log")
+            for path in (stage, *stage.rglob("*")):
+                check_path(path)
+            package_root = stage / f"usr/share/plasma/wallpapers/{PLUGIN}"
+            native = package_root / "contents/ui/shaderwallpaper/libshaderwallpaperplugin.so"
+            required = [native, package_root / "LICENSE", package_root / "metadata.json",
+                        stage / "usr/share/wallpapers/Arasaka/mikoshi-16x9.png",
+                        stage / "usr/share/wallpapers/Arasaka/mikoshi-16x10.png",
+                        stage / "usr/share/wallpapers/Arasaka/shaders/Heartfelt_No_Heart.frag"]
+            if any(not p.is_file() for p in required):
+                raise ValueError("incomplete system wallpaper stage")
+            docs = stage / "usr/share/doc/arasaka-login-wallpaper"
+            docs.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(repo / "ATTRIBUTION.md", docs / "copyright")
+            shutil.copy2(package_root / "LICENSE", docs / "LICENSE.engine")
+            shutil.copytree(repo / "LICENSES", docs / "LICENSES", dirs_exist_ok=True)
+            shutil.copy2(repo / "manifest/components.tsv", docs / "components.tsv")
+            shutil.copytree(repo / "assets/wallpapers/shaders", docs / "adaptations")
+            qml_root = Path(run("qtpaths6", "--query", "QT_INSTALL_QML").strip())
+            modules = qml_imports(package_root)
+            runtime = {"qml6-module-qtqml-workerscript"}
+            module_packages = {}
+            for module in modules:
+                qmldir = qml_root / module.replace(".", "/") / "qmldir"
+                if not qmldir.is_file():
+                    raise ValueError(f"cannot resolve QML runtime import {module}: {qmldir}")
+                owner = run("dpkg-query", "--search", str(qmldir)).strip().split(": ")[0].split(":")[0]
+                runtime.add(owner)
+                module_packages[module] = owner
+            elfs = []
+            for path in sorted(stage.rglob("*")):
+                check_path(path)
+                if path.is_dir():
+                    path.chmod(0o755)
+                elif path.is_file():
+                    path.chmod(0o644)
+                    with path.open("rb") as stream:
+                        if stream.read(4) == b"\x7fELF":
+                            elfs.append(str(path))
+                else:
+                    raise ValueError(f"unexpected staged file type: {path}")
+            if str(native) not in elfs:
+                raise ValueError("wallpaper native plugin is not ELF")
+            shlibs = run("dpkg-shlibdeps", "-O", *[f"-e{path}" for path in elfs], cwd=source,
+                         log=work / "wallpaper-shlibdeps.log")
+            depends = next(line.split("=", 1)[1] for line in shlibs.splitlines() if line.startswith("shlibs:Depends="))
+            control = stage / "DEBIAN"
+            control.mkdir()
+            stage.chmod(0o755)
+            control.chmod(0o755)
+            size = sum(p.stat().st_size for p in stage.rglob("*") if p.is_file())
+            (control / "control").write_text(
+                "Package: arasaka-login-wallpaper\nVersion: 1.0-1\nArchitecture: amd64\n"
+                "Maintainer: Arasaka KDE Maintainers <maintainers@arasaka-kde.invalid>\n"
+                "Section: non-free/x11\nPriority: optional\n"
+                f"Installed-Size: {(size + 1023) // 1024}\n"
+                f"Depends: {depends}, {', '.join(sorted(runtime))}\n"
+                "Description: System-wide Arasaka login wallpaper and native QML renderer\n"
+                " Pinned shader engine, adapted shaders, artwork and attribution.\n"
+                " No services or user configuration are changed by this package.\n")
+            (control / "control").chmod(0o644)
+            package = work / "arasaka-login-wallpaper_1.0-1_amd64.deb"
+            run("dpkg-deb", "--root-owner-group", "--build", str(stage), str(package))
+            inventory["packages"].append(inspect_package(package, output, work))
+            inventory["wallpaper_qml_imports"] = modules
+            inventory["wallpaper_qml_packages"] = module_packages
+            shutil.copy2(package, output / package.name)
+            (output / "inventory.json").write_text(json.dumps(inventory, indent=2) + "\n")
+        print(f"Built and inspected {len(inventory['packages'])} package(s): {output}")
+        print("No packages installed; authentication and rendering remain unverified.")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, StopIteration, subprocess.CalledProcessError, tarfile.TarError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        sys.exit(1)
