@@ -1,5 +1,35 @@
 # Attribution
 
+## Project License
+
+Copyright (c) 2026 Arasaka KDE contributors. Licensed under the EUPL-1.2, except
+where a file notice, component metadata or the exceptions below specify another
+license. This default covers original project code, configuration, documentation
+and artwork; it does not relicense third-party material or existing adaptations.
+
+The unmodified English EUPL 1.2 text in `LICENSE` was downloaded with `curl` from
+the European Commission's [developer text](https://joinup.ec.europa.eu/sites/default/files/custom-page/attachment/2020-03/EUPL-1.2%20EN.txt),
+linked by its [official EUPL page](https://interoperable-europe.ec.europa.eu/collection/eupl/eupl-text-eupl-12).
+
+Existing component exceptions remain unchanged:
+
+| Component | License |
+| --- | --- |
+| `plasma/applets/com.arasaka.launcher/` | MIT; see `LICENSES/MIT.txt` |
+| `theme/plasma/desktoptheme/com.arasaka.mikoshi/` | CC0-1.0; see `LICENSES/CC0-1.0.txt` |
+| `theme/plasma/look-and-feel/com.arasaka.mikoshi/` and `theme/sddm/com.arasaka.mikoshi/` | GPL-3.0, as declared in component metadata; text in `LICENSES/GPL-3.0-or-later.txt` |
+| `theme/kwin/effects/arasaka_tv_glitch_minimize/` | GPL-3.0-or-later; see `LICENSES/GPL-3.0-or-later.txt` |
+| `packaging/plasmalogin/debian/` | GPL-2.0-or-later for local packaging; the adapted debconf script retains its GPL version 2 notice; see `LICENSES/GPL-2.0-or-later.txt` and the packaging `copyright` file |
+| `theme/lockscreen/silent-plasma-6.7.patch` | Retains the upstream Silent KLockscreen GPL terms |
+| `assets/wallpapers/shaders/heartfelt-no-heart.patch` and `assets/wallpapers/shaders/dusti.patch` | CC BY-NC-SA 3.0, with the qualifications below |
+
+Downloaded upstream components and shaders retain their own licenses and notices,
+as detailed below. The noncommercial shaders are not covered by the project EUPL
+grant. License-document copyrights belong to their respective authors; including
+a license text does not change any component's grant.
+
+## Credits
+
 The Arasaka color scheme, launcher artwork, Mikoshi wallpapers, splash screen,
 SDDM theme, browser integration, and shell palette are original project work.
 

@@ -9,6 +9,20 @@ Do not commit complete personal configuration directories, browser profiles,
 signing keys, caches, or runtime window/monitor state. Capture the settings needed
 to reproduce the appearance instead.
 
+## License
+
+Copyright (c) 2026 Arasaka KDE contributors.
+
+Except where file notices, component metadata, or [ATTRIBUTION.md](ATTRIBUTION.md)
+specify otherwise, original project code, configuration, documentation, and artwork
+are licensed under the **European Union Public Licence v1.2 (EUPL-1.2)**.
+The complete official English text is in [LICENSE](LICENSE).
+
+Existing component licenses and third-party terms remain in effect, including
+MIT, CC0, GPL, and the shaders' noncommercial/share-alike licenses. Adding the
+EUPL does not relicense those materials. See [ATTRIBUTION.md](ATTRIBUTION.md) for
+the scope, credits and exceptions, and [LICENSES/](LICENSES/) for additional texts.
+
 ## Apply
 
 The current deployment command is:

@@ -264,6 +264,7 @@ def main():
             docs = stage / "usr/share/doc/arasaka-login-wallpaper"
             docs.mkdir(parents=True, exist_ok=True)
             shutil.copy2(repo / "ATTRIBUTION.md", docs / "copyright")
+            shutil.copy2(repo / "LICENSE", docs / "LICENSE.project")
             shutil.copy2(package_root / "LICENSE", docs / "LICENSE.engine")
             shutil.copytree(repo / "LICENSES", docs / "LICENSES", dirs_exist_ok=True)
             shutil.copy2(repo / "manifest/components.tsv", docs / "components.tsv")
