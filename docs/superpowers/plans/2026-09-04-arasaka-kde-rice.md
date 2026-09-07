@@ -6,7 +6,7 @@
 
 **Architecture:** A local Git repository owns declarative theme assets and narrow deployment scripts, never a copy of the whole home configuration. Python handles JSON topology decisions; strict Bash handles staging, snapshots, deployment, diagnostics, and rollback; Plasma JavaScript creates idempotent role-based panels. All external components are pinned and verified before installation.
 
-**Tech Stack:** Bash, Python 3 standard library, Plasma 6 JavaScript API, KConfig tools, systemd user units, SVG, FFmpeg, Kvantum, Klassy, KWin/Wayland.
+**Tech Stack:** Bash, Python 3 standard library, Plasma 6 JavaScript API, KConfig tools, systemd user units, SVG, CMake, C++20, Qt 6/OpenGL, Kvantum, Klassy, KWin/Wayland.
 
 **Spec:** `docs/superpowers/specs/2026-09-04-arasaka-kde-rice-design.md`
 
@@ -21,7 +21,7 @@
 - Every downloaded artifact must be pinned by immutable URL and SHA-256.
 - Do not execute upstream installation scripts against the live home directory.
 - Preserve the Konsole `Quake.profile` workflow and bottom tab placement.
-- Keep a functional native-Blur and static-wallpaper fallback.
+- Keep native Blur available for effect recovery. Preserve the shader install on build failure and report activation failures without selecting another wallpaper.
 
 ---
 
@@ -51,7 +51,7 @@ Expected: non-zero exit because `lib/common.sh` does not exist.
 
 - [ ] **Step 3: Implement the shared shell library and project entry points**
 
-Use strict mode in every executable. `state_root` returns `${XDG_STATE_HOME:-$HOME/.local/state}/arasaka-kde`; `cache_root` returns `${XDG_CACHE_HOME:-$HOME/.cache}/arasaka-kde`; `snapshot_root` appends `/snapshots`; `atomic_copy` copies to a sibling temporary path, preserves mode, and renames it into place. `Makefile` exposes `test`, `doctor`, `dry-run`, `apply`, and `rollback` targets. `.gitignore` excludes `.cache/`, `build/`, generated video, screenshots, and local snapshots.
+Use strict mode in every executable. `state_root` returns `${XDG_STATE_HOME:-$HOME/.local/state}/arasaka-kde`; `cache_root` returns `${XDG_CACHE_HOME:-$HOME/.cache}/arasaka-kde`; `snapshot_root` appends `/snapshots`; `atomic_copy` copies to a sibling temporary path, preserves mode, and renames it into place. `Makefile` exposes `test`; deployment commands are invoked directly from `bin/`. Add convenience targets only when their implementations exist. `.gitignore` excludes `.cache/`, `build/`, screenshots, and local snapshots.
 
 - [ ] **Step 4: Run the foundation test**
 
@@ -92,7 +92,6 @@ Use tab-separated fields `name`, `version`, `url`, `sha256`, and `filename`. Pin
 ```text
 panel-colorizer  v8.0.0  plasmoid-panel-colorizer-v8.0.0.plasmoid  93f737af4d6291f2c84800090258c77511270817d7a5ecc56de45a6af966b2ee
 polonium         v1.2.1  polonium.kwinscript                         1f7cd126d4341761fde0e0d82f277118030dc372b734825d6b1edf3d41b6bd85
-smart-video      v2.14.1 plasma-smart-video-wallpaper-reborn.tar.gz 7ac3c392942f40013622880a2ac1333734e1d63ac12cc0a73e54753d412789ca
 application-bar  v0.10.0 application-title-bar.plasmoid             fb90a257ba9cce41deea27aef6f41a650a3a788af5542967d1d2c072c8ceac63
 kurve            v3.6.0  Kurve-v3.6.0.plasmoid                      845b6823e2e2e91e82769e70c7a349fbc8ef7f90e360e0ad99884ee958ec9b03
 ```
@@ -156,51 +155,62 @@ Expected: all theme files parse and palette assertions pass.
 
 Run: `git add theme tests/theme_assets_test.py && git commit -m "feat: add Arasaka visual theme"`
 
-### Task 4: Mikoshi Artwork And Sound
+### Task 4: Mikoshi Artwork And Shader Wallpaper
 
 **Files:**
-- Create: `assets/wallpapers/mikoshi-master.svg`
-- Create: `assets/wallpapers/mikoshi-16x9.svg`
-- Create: `assets/wallpapers/mikoshi-16x10.svg`
-- Create: `assets/sounds/freedesktop/stereo/README.md`
-- Create: `scripts/render-assets`
-- Create: `tests/render_assets_test.sh`
-- Create: `ATTRIBUTION.md`
+- `assets/wallpapers/mikoshi-16x9.svg`
+- `assets/wallpapers/mikoshi-16x10.svg`
+- `assets/wallpapers/shaders/heartfelt-no-heart.patch`
+- `assets/wallpapers/shaders/dusti.patch`
+- `bin/apply-shader-wallpaper`
+- `plasma/shader-wallpaper.js`
+- `manifest/components.tsv`
+- `ATTRIBUTION.md`
 
 **Interfaces:**
-- Produces: `build/wallpapers/mikoshi-3840x2160.png`, `build/wallpapers/mikoshi-2560x1600.png`, `build/wallpapers/mikoshi-loop.mp4`, and a freedesktop-compatible sound directory.
+- Produces: the user-local `online.knowmad.shaderwallpaper` package, Mikoshi PNG
+  textures at 1920x1080 and 1600x1000, and the adapted Heartfelt No Heart shader.
+- `bin/apply-shader-wallpaper --install-only` installs without live session calls;
+  its default mode also applies wallpaper settings to existing active screens.
 
-- [ ] **Step 1: Write render validation tests**
+- [x] **Step 1: Author the Mikoshi composition**
 
-Assert the source SVGs parse, contain 16:9 and 16:10 view boxes, keep the emblem in the central safe area, and contain only the approved palette. When rendering tools exist, assert exact PNG dimensions with `identify` and assert a silent H.264 loop with `ffprobe`.
+Use the original SVG geometry: black architectural field, red central data
+monolith, white corporate grid, Japanese labels, scanlines, and the Arasaka emblem.
+Keep the composition legible in both aspect ratios without unlicensed raster art.
 
-- [ ] **Step 2: Run tests and verify missing artwork fails**
+- [x] **Step 2: Build the pinned shader renderer**
 
-Run: `bash tests/render_assets_test.sh`
+Fetch the checksum-pinned kde-shader-wallpaper source and Tokyo/Dusti inputs
+through `fetch-components`. Compile in temporary storage with CMake, retaining
+the native module inside the wallpaper package. Do not run upstream installers.
 
-Expected: non-zero exit because source artwork is absent.
+- [x] **Step 3: Prepare the shader and artwork**
 
-- [ ] **Step 3: Author the Mikoshi composition**
+Apply the no-heart patch to a separate Heartfelt copy, leaving the bundled
+original untouched. Render the PNGs with `rsvg-convert` in staging. Add credited
+Tokyo and Dusti gallery entries, including Dusti's opaque-alpha adapter. Preserve
+custom imports, gallery identities, favorites, and all source/license headers.
 
-Create original SVG geometry: black architectural field, red central data monolith, white corporate grid, Japanese labels, scanline mask, and an Arasaka-inspired three-part sakura emblem. Keep text converted or rendered with the declared fonts and avoid embedding unlicensed raster art.
+- [x] **Step 4: Install and configure the wallpaper**
 
-- [ ] **Step 4: Implement deterministic rendering**
+Back up replaced assets and settings before deployment. The configuration script
+selects Heartfelt No Heart at 30 FPS, full resolution, and 75% speed, with only
+texture channel 0 enabled. It disables mouse/audio/window-reactive input,
+playlists, and buffer passes; window-based pausing remains screen-local.
+Use escaped absolute file URLs and require successful configuration readback.
 
-Use `rsvg-convert` for exact static dimensions. Use FFmpeg to animate a 12-second seamless slow red pulse and vertical scan, encode H.264 yuv420p with no audio stream, and place generated files only under ignored `build/`.
+- [x] **Step 5: Delegate full deployment to the shader command**
 
-- [ ] **Step 5: Generate a short original sound set**
-
-Use FFmpeg sine/noise sources and envelopes to create startup, notification, warning, and logout Ogg files. Keep each under two seconds except startup, and normalize below clipping. Record that all authored assets are project-original in `ATTRIBUTION.md`.
-
-- [ ] **Step 6: Run render tests**
-
-Run: `make test`
-
-Expected: source validation passes; binary render checks pass when dependencies are installed.
-
-- [ ] **Step 7: Commit source assets**
-
-Run: `git add assets scripts/render-assets tests/render_assets_test.sh ATTRIBUTION.md && git commit -m "feat: add Mikoshi artwork sources"`
+`apply-live` invokes the default shader command once, then delegates the independent
+lock-screen shader/no-clock appearance to `apply-lockscreen`. Lock policy remains
+unchanged. The layout only hides desktop icons when explicitly requested
+with `--hide-desktop-icons`; launcher-only/default reconciliation preserves
+wallpaper and icon choices. The full-theme watcher additionally opts into
+initializing non-shader desktops, preserving existing shader selections/settings
+and retrying while enabled outputs await desktop assignment. A shader failure
+stops deployment rather than switching wallpaper implementations. Plasma is never
+restarted automatically.
 
 ### Task 5: Display Topology Decision Engine
 
@@ -359,7 +369,7 @@ Run: `git add lib/inventory.tsv bin tests/apply_rollback_test.sh && git commit -
 
 - [ ] **Step 1: Write diagnostic tests with command stubs**
 
-Assert healthy stubs return exit 0 and JSON status `ok`. Assert X11, wrong Plasma major, missing codec, mismatched KWin/Better Blur ABI, failed wallpaper probe, and missing applet each return non-zero with a specific remediation message. Assert degraded native-Blur/static-wallpaper fallback is distinguishable from fatal status.
+Assert healthy stubs return exit 0 and JSON status `ok`. Assert X11, wrong Plasma major, mismatched KWin/Better Blur ABI, failed shader loading, and missing applet each return non-zero with a specific remediation message. Assert degraded native Blur is distinguishable from fatal status.
 
 - [ ] **Step 2: Run tests and verify missing doctor fails**
 
@@ -369,15 +379,15 @@ Expected: non-zero exit because `bin/doctor` is absent.
 
 - [ ] **Step 3: Implement distro dependency resolution**
 
-Map TUXEDO/Debian package names for build tools, Qt/KF6 development libraries, Kvantum, FFmpeg, librsvg, CAVA, WebSockets, and fonts. Print the exact package command before using `sudo`. Install user-level plasmoids from verified files with `kpackagetool6`; extract source archives into cache; build Klassy and Better Blur DX in isolated build directories; never invoke their installer scripts.
+Map TUXEDO/Debian package names for build tools, Qt/KF6/Plasma development libraries, Kvantum, librsvg, CAVA, WebSockets, and fonts. Include Qt OpenGL and Multimedia for the native shader renderer. Print the exact package command before using `sudo`. Install user-level plasmoids from verified files with `kpackagetool6`; extract source archives into cache; build Klassy and Better Blur DX in isolated build directories; never invoke their installer scripts.
 
 - [ ] **Step 4: Implement doctor and fallbacks**
 
-Check commands, Wayland, Plasma/KWin versions, manifest hashes, installed packages, applet/effect registration, generated assets, media codecs, user units, panel count, virtual desktop count, current primary-output decision, and live Plasma/KWin logs. Provide commands to switch video to static and Better Blur DX to native Blur.
+Check commands, Wayland, Plasma/KWin versions, manifest hashes, installed packages, applet/effect registration, generated assets, shader-module availability, user units, panel count, virtual desktop count, current primary-output decision, and live Plasma/KWin logs. Provide shader-backup recovery instructions and commands to switch Better Blur DX to native Blur.
 
 - [ ] **Step 5: Document TTY and graphical recovery**
 
-Document stopping video wallpaper, disabling the topology units, restoring the newest snapshot, restarting Plasma, and recovering from a KWin effect mismatch after upgrades.
+Document restoring the appropriate shader package, artwork, and configuration backup while Plasma is stopped, preserving the paired layout scripts, and recovering from a KWin effect mismatch after upgrades.
 
 - [ ] **Step 6: Run diagnostics tests**
 
@@ -413,9 +423,11 @@ Expected: no fatal preflight issue; dry-run lists only inventoried paths/setting
 
 - [ ] **Step 3: Install dependencies and render assets**
 
-Run: `./bin/install && ./scripts/render-assets`
+Install the prerequisites listed in the README, then run
+`./bin/apply-shader-wallpaper --install-only`.
 
-Expected: verified applets and exact-version effects are registered; static PNGs and silent MP4 pass render validation.
+Expected: the shader package, adapted fragment shader, and PNG textures are
+installed with a printed backup path; the active wallpaper selection is unchanged.
 
 - [ ] **Step 4: Apply with the current external display connected**
 
@@ -437,7 +449,7 @@ Run the live reconciler against sanitized internal-only KScreen JSON and, if the
 
 - [ ] **Step 8: Finalize user documentation**
 
-Document normal install/apply/rollback, component upgrades, KWin rebuild requirements after Plasma upgrades, external-primary rules, static fallback, and the exact newest snapshot identifier in `README.md` and `docs/verification.md`.
+Document normal installation and application, component upgrades, KWin rebuild requirements after Plasma upgrades, external-primary rules, shader-backup recovery, and the exact newest snapshot identifier in `README.md` and `docs/verification.md`.
 
 - [ ] **Step 9: Commit verified integration**
 

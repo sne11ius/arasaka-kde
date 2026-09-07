@@ -531,15 +531,9 @@ Run all shell and Python tests:
 make test
 ```
 
-The Makefile also lists the following **planned, currently unimplemented**
-operational entry points:
-
-```sh
-make doctor
-make dry-run
-make apply
-make rollback SNAPSHOT=<snapshot-id>
-```
+Deployment uses the scoped `bin/` commands documented above. Full-desktop
+dependency provisioning, diagnostics, dry-run and transactional rollback remain
+unimplemented; the Makefile does not expose placeholders for them.
 
 See `docs/superpowers/specs/2026-09-04-arasaka-kde-rice-design.md` for the design and
 `docs/superpowers/plans/2026-09-04-arasaka-kde-rice.md` for the implementation plan.

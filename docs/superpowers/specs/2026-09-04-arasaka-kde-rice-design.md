@@ -83,7 +83,22 @@ Use a maintained monochrome dark icon base with an Arasaka override layer for la
 
 Create an original "Mikoshi data core" composition in both 16:9 4K and 16:10 2560x1600 forms. It uses black architectural space, severe red geometry, Japanese corporate markings, scanlines, and an Arasaka emblem. Important visual elements stay inside safe areas so cropping on an unfamiliar external display remains intentional.
 
-The desktop uses a slow, silent animated loop through Smart Video Wallpaper Reborn. Static versions are used as immediate fallback and for SDDM, splash, and recovery. The lock screen may use the animated loop only if a smoke test confirms reliable playback; otherwise it uses the static artwork.
+The desktop uses the native C++/OpenGL renderer from kde-shader-wallpaper with
+Heartfelt No Heart over the Mikoshi artwork. The effect retains rain, fog,
+refraction, and reduced-frequency lightning at 30 FPS and 75% speed. Mouse,
+audio, and window-reactive inputs are disabled. The primary display receives the
+16:9 texture and other displays receive the 16:10 texture. The lock screen uses
+the same shader with the 16:9 texture and no clock through `apply-lockscreen`,
+without changing authentication or lock timing. SDDM fallback and splash use
+static artwork; the active PLM login has an independent system-wide shader.
+
+`bin/apply-shader-wallpaper` owns shader compilation, asset generation, backups,
+installation, and wallpaper configuration. `apply-live` invokes it once.
+Launcher-only and default display reconciliation preserve wallpaper choices;
+the full-theme watcher opts into initializing non-shader desktops while preserving
+existing shader selections and parameters. It retries when Plasma has not yet
+created desktops for enabled outputs. Full or standalone shader reapplication
+selects Heartfelt No Heart while retaining gallery imports and favorites.
 
 All third-party visual material must retain source and license attribution in the repository. Assets without clear redistribution terms may be used only as local source inputs and must not be committed.
 
@@ -180,7 +195,7 @@ The pinned extension layer includes:
 - Panel Colorizer v8.0.0, including Plasma 6.7 per-output support
 - Polonium v1.2.1, whose current upstream recommends Plasma 6.7
 - Better Blur DX v2.5.1, built locally against the installed KWin 6.7.2
-- Smart Video Wallpaper Reborn v2.14.1
+- kde-shader-wallpaper at commit `6a8c01eb7c3a47a0991707561da737b365553247`, with the local Heartfelt No Heart patch and pinned Tokyo/Dusti gallery shaders
 - Application Title Bar v0.10.0, a pure-QML Plasma 6 active-window applet
 - Plasma-native System Monitor sensor faces
 - Kurve v3.6.0 with CAVA, used only on the support display
@@ -200,16 +215,24 @@ Every upstream component is fetched into a build cache, verified against the man
 
 ## Commands And Data Flow
 
-The repository exposes these user-facing commands:
+The current user-facing commands are:
 
-- `./bin/install`: install distro dependencies, fonts, and pinned components.
-- `./bin/apply --dry-run`: print every planned file and KDE setting change without modifying the system.
-- `./bin/apply`: create a snapshot, stage and validate assets, then switch the live desktop.
-- `./bin/doctor`: report environment, dependency, component, codec, KWin ABI, wallpaper, and panel health.
-- `./bin/reconcile-displays`: apply only primary-output and panel-role rules.
-- `./bin/rollback [snapshot]`: restore a selected snapshot and remove project-owned deployed assets.
+- `./bin/apply-live`: apply the full desktop theme with component-specific backups.
+- `./bin/apply-launcher`: apply only the launcher and its display integration.
+- `./bin/apply-shader-wallpaper`: build, install and configure the desktop shader.
+- `./bin/apply-lockscreen`: configure the independent lock-screen shader and clock.
+- `./bin/apply-window-effects`: apply the managed KWin effects.
+- `./bin/reconcile-displays`: reconcile display priority and launcher placement;
+  wallpaper initialization is an explicit full-theme opt-in.
+- `./bin/build-plm`: build and inspect the local login-manager/wallpaper packages.
+- `./bin/apply-plm`: perform a one-shot PLM migration with scoped recovery through
+  `--rollback BACKUP`.
 
-Apply order:
+See `README.md` for prerequisites and precise command boundaries. Full-desktop
+dependency provisioning, dry-run, transactional snapshots/rollback and diagnostics
+remain unimplemented; PLM's scoped recovery is not a full-desktop rollback.
+
+Planned full-desktop transactional apply order:
 
 1. Validate the environment and manifest.
 2. Create a timestamped snapshot with an inventory of every touched path and setting.
@@ -219,7 +242,7 @@ Apply order:
 6. Install and enable topology user units.
 7. Apply privileged SDDM integration separately after displaying the exact operation.
 8. Restart Plasma services or request one logout/login when required by compiled KWin effects.
-9. Run `doctor` and capture verification screenshots.
+9. Run deployment diagnostics and record actual results.
 
 ## Safety And Recovery
 
@@ -227,9 +250,9 @@ Apply order:
 - Refuse to apply if the current Plasma major version, session type, required tools, or manifest hashes do not match supported values.
 - Treat third-party archives as untrusted input: verify checksums, inspect paths, and reject traversal or writes outside staging.
 - Keep user-level operations unprivileged. Isolate and enumerate every `sudo` operation.
-- Restore the pre-apply snapshot automatically if a pre-switch or configuration validation step fails.
+- A full-desktop transactional installer must restore its pre-apply snapshot automatically if a pre-switch or configuration validation step fails; that installer is not yet implemented.
 - If a post-switch component fails, retain a functional Plasma fallback and print the exact rollback command.
-- Video wallpaper always has a static fallback and a documented TTY recovery path.
+- Shader build or asset-validation failure preserves the installed shader package, artwork, and wallpaper configuration. Activation errors stop deployment visibly; recovery uses the printed component backup rather than silently selecting another wallpaper.
 - Better Blur DX always has native Blur as fallback.
 - Reconciliation is idempotent and logs decisions without recording EDID or other unnecessary hardware identifiers.
 
@@ -245,7 +268,7 @@ Automated tests cover:
 - Display fixtures for internal-only, one external plus internal, external-only, and multiple-external cases.
 - Primary-output selection without changing any display property other than priority.
 - Panel reconciliation without duplicates.
-- Recovery behavior for missing codecs, failed wallpaper playback, and incompatible KWin effects.
+- Recovery behavior for failed shader installation and incompatible KWin effects.
 
 Live verification covers:
 

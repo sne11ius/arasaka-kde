@@ -2,7 +2,6 @@ name	version	url	sha256	filename
 plasma-login-manager	6.7.4	https://download.kde.org/stable/plasma/6.7.4/plasma-login-manager-6.7.4.tar.xz	8ba5f9a5b31b2cb09d6846c590d09891dadb9a5625426b8552577299093b67fd	plasma-login-manager-6.7.4.tar.xz
 panel-colorizer	v8.0.0	https://github.com/luisbocanegra/plasma-panel-colorizer/releases/download/v8.0.0/plasmoid-panel-colorizer-v8.0.0.plasmoid	93f737af4d6291f2c84800090258c77511270817d7a5ecc56de45a6af966b2ee	plasmoid-panel-colorizer-v8.0.0.plasmoid
 polonium	v1.2.1	https://github.com/zeroxoneafour/polonium/releases/download/v1.2.1/polonium.kwinscript	1f7cd126d4341761fde0e0d82f277118030dc372b734825d6b1edf3d41b6bd85	polonium.kwinscript
-smart-video	v2.14.1	https://github.com/luisbocanegra/plasma-smart-video-wallpaper-reborn/releases/download/v2.14.1/plasma-smart-video-wallpaper-reborn-v2.14.1.tar.gz	7ac3c392942f40013622880a2ac1333734e1d63ac12cc0a73e54753d412789ca	plasma-smart-video-wallpaper-reborn.tar.gz
 application-bar	v0.10.0	https://github.com/antroids/application-title-bar/releases/download/v0.10.0/application-title-bar.plasmoid	fb90a257ba9cce41deea27aef6f41a650a3a788af5542967d1d2c072c8ceac63	application-title-bar.plasmoid
 kurve	v3.6.0	https://github.com/luisbocanegra/kurve/releases/download/v3.6.0/Kurve-v3.6.0.plasmoid	845b6823e2e2e91e82769e70c7a349fbc8ef7f90e360e0ad99884ee958ec9b03	Kurve-v3.6.0.plasmoid
 klassy	v6.7.2	https://codeload.github.com/paulmcauley/klassy/tar.gz/c144ad45c0d1ab29a7cc5a10b0157809bb8cb492	3024db66c67fc312d4acd3bc69236a215191604ca559a1c74d17f85c0e4e59c9	klassy-v6.7.2.tar.gz

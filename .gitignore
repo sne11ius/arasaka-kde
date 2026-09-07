@@ -1,6 +1,6 @@
 .cache/
 __pycache__/
 build/
-*.mp4
 screenshots/
 snapshots/
+/error_20260906_233157.png
