@@ -347,6 +347,36 @@ script starts, so changing the defaults requires a script reload or a new login
 to affect an already-running instance. Its per-output settings menu can override
 the default layout for the current output/desktop/activity.
 
+## Authentication Prompts
+
+GPG PIN/passphrase (`pinentry-qt`) and KDE SSH (`ksshaskpass`) prompts are forced
+into KWin's keep-above layer and cannot be kept below other windows. The rule
+matches their Wayland app IDs and XWayland resource classes, for both normal
+windows and dialogs. Newly opened prompts can appear above the Stream Deck Quake
+Konsole without disabling its always-on-top behavior. This does not change the
+global focus policy or make prompts permanently outrank every always-on-top window.
+
+To apply only this policy in the running Plasma session:
+
+```sh
+./bin/apply-auth-window-rules
+```
+
+`apply-live` also calls this command. It preserves existing window rules and
+Polonium exclusions, saves `kwinrulesrc` and `kwinrc` under
+`${XDG_STATE_HOME:-$HOME/.local/state}/arasaka-kde/backups/auth-window-rules-*`,
+and reloads KWin's rules without restarting Konsole or Polonium. Keep these
+backups local because they can contain personal settings.
+
+Stacking changes apply immediately. The added Polonium exclusions keep these
+prompts floating after Polonium's next reload or login; the command deliberately
+does not restart the tiler and rebuild the current window layout. No key-agent,
+credential-storage, or SSH/GPG security settings are changed.
+
+Verified in the live Plasma session on 2026-09-08 with auto-closing confirmation
+dialogs from both helpers on Wayland and XWayland: all four opened above the
+existing keep-above Konsole. No real credentials or keys were used.
+
 ## Window Effects
 
 Open, close, minimize, and restore use **TV Glitch at 700 ms**. The global Plasma

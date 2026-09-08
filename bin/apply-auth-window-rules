@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/common.sh
+source "$script_dir/../lib/common.sh"
+
+[[ $# -eq 0 ]] || die "usage: $0 (run inside the target Plasma session)"
+for tool in qdbus6 kreadconfig6 kwriteconfig6; do
+    require_command "$tool"
+done
+qdbus6 org.kde.KWin /KWin org.freedesktop.DBus.Peer.Ping >/dev/null \
+    || die "KWin session is unavailable; no settings changed"
+
+config_home=${XDG_CONFIG_HOME:-$HOME/.config}
+install -d "$config_home" "$(state_root)/backups"
+backup=$(mktemp -d "$(state_root)/backups/auth-window-rules-$(date +%Y%m%d-%H%M%S).XXXXXX")
+log "Authentication window-rule backup: $backup"
+for file in kwinrulesrc kwinrc; do
+    [[ ! -f "$config_home/$file" ]] || cp -a "$config_home/$file" "$backup/$file"
+done
+
+# Qt uses desktop app IDs on Wayland and short resource classes on XWayland.
+auth_pattern='^(pinentry-qt|org[.]gnupg[.]pinentry-qt|ksshaskpass|org[.]kde[.]ksshaskpass)$'
+rule=arasaka-auth-prompts
+existing_rules=$(kreadconfig6 --file kwinrulesrc --group General --key rules)
+IFS=, read -r -a rule_ids <<< "$existing_rules"
+# KWin uses the first matching policy for each property.
+window_rules=$rule
+for id in "${rule_ids[@]}"; do
+    [[ -z $id || $id == "$rule" ]] || window_rules+=,$id
+done
+IFS=, read -r -a rule_ids <<< "$window_rules"
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key Description 'Arasaka authentication prompts above terminals'
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key types 33
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key wmclass "$auth_pattern"
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key wmclassmatch 3
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key wmclasscomplete --type bool false
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key above --type bool true
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key aboverule 2
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key below --type bool false
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key belowrule 2
+kwriteconfig6 --file kwinrulesrc --group General --key rules "$window_rules"
+kwriteconfig6 --file kwinrulesrc --group General --key count "${#rule_ids[@]}"
+
+ignored=$(kreadconfig6 --file kwinrc --group Script-polonium --key IgnoreWindowClasses \
+    --default 'krunner, yakuake, kded, polkit, plasmashell, xwaylandvideobridge')
+raw_regex=$(kreadconfig6 --file kwinrc --group Script-polonium --key RawRegex --default false)
+if [[ $raw_regex == true ]]; then
+    if [[ $ignored != *"$auth_pattern"* ]]; then
+        ignored=${ignored:+$ignored|}$auth_pattern
+    fi
+else
+    for app_id in pinentry-qt org.gnupg.pinentry-qt ksshaskpass org.kde.ksshaskpass; do
+        if [[ ,${ignored//[[:space:]]/}, != *,$app_id,* ]]; then
+            ignored=${ignored:+$ignored, }$app_id
+        fi
+    done
+fi
+kwriteconfig6 --file kwinrc --group Script-polonium --key IgnoreWindowClasses "$ignored"
+
+# Reload rules, not the tiler: restarting Polonium would rebuild the live layout.
+qdbus6 org.kde.KWin /KWin org.kde.KWin.reconfigure
+log 'PIN/SSH prompts now keep above other windows. Polonium exclusions take effect at its next reload/login.'

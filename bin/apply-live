@@ -151,7 +151,6 @@ kwriteconfig6 --file kwinrc --group Script-polonium --key BTreeRotateLayout --ty
 kwriteconfig6 --file kwinrc --group Script-polonium --key BTreeInsertInActive --type bool false --notify
 kwriteconfig6 --file kwinrc --group Script-polonium --key WindowDragPolicy 2 --notify
 kwriteconfig6 --file kwinrc --group Script-polonium --key Borders 4 --notify
-kwriteconfig6 --file kwinrc --group Script-polonium --key IgnoreWindowClasses 'krunner, yakuake, kded, polkit, plasmashell, xwaylandvideobridge' --notify
 
 window_rules=$(kreadconfig6 --file kwinrulesrc --group General --key rules)
 if [[ ,$window_rules, != *,arasaka-frame,* ]]; then
@@ -164,6 +163,8 @@ kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key wmclass '.*' --noti
 kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key wmclassmatch 3 --notify
 kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key noborder --type bool false --notify
 kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key noborderrule 2 --notify
+
+"$repo_root/bin/apply-auth-window-rules"
 
 kwriteconfig6 --file klassy/klassyrc --group Windeco --key ButtonIconStyle 2 --notify
 kwriteconfig6 --file klassy/klassyrc --group Windeco --key ButtonShape 5 --notify

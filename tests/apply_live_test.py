@@ -23,7 +23,7 @@ class ApplyLiveTest(unittest.TestCase):
                 "[Script-polonium]\nDefaultEngine=2\n"
                 "BTreeInsertionStyle=1\nBTreeSwapInsertSide=false\n"
                 "BTreeRotateLayout=true\nBTreeInsertInActive=true\n"
-                "WindowDragPolicy=1\n"
+                "WindowDragPolicy=1\nIgnoreWindowClasses=custom-app\n"
             )
             tools = home / "tools"
             tools.mkdir()
@@ -50,7 +50,7 @@ class ApplyLiveTest(unittest.TestCase):
                 "BTreeSwapInsertSide": "true", "BTreeRotateLayout": "false",
                 "BTreeInsertInActive": "false", "WindowDragPolicy": "2",
                 "Borders": "4",
-                "IgnoreWindowClasses": "krunner, yakuake, kded, polkit, plasmashell, xwaylandvideobridge",
+                "IgnoreWindowClasses": "custom-app",
             }
             for key, value in expected.items():
                 with self.subTest(key=key):
