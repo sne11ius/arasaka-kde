@@ -57,12 +57,12 @@ The core palette is deliberately narrow:
 - Arasaka crimson: `#E60012`
 - Critical alert: `#FF3344`
 
-Red is reserved for active focus, separators, warnings, selected controls, progress, and Arasaka identity marks. The design must not introduce a blue-purple cyberpunk gradient or multicolor status palette. Positive and neutral states remain white or gray unless color is required for accessibility.
+Red is reserved for active focus, separators, warnings, selected controls, progress, and Arasaka identity marks. Application surfaces must not introduce a blue-purple cyberpunk gradient or multicolor status palette. Positive and neutral UI states remain white or gray unless color is required for accessibility. The wallpaper-only palette expansion approved on 2026-09-08 adds crimson/coral illumination, cyan light channels, and small amber accents to separate tiling gaps from dark windows; it does not change the UI palette.
 
 ### Shape And Material
 
 - Near-square window corners with small geometric cuts rather than large rounded cards.
-- Thin crimson active-window frame and muted graphite inactive frames.
+- No thin window outlines on either active or inactive Klassy decorations; retain shadows and hidden titlebars.
 - Dark translucent panels with controlled blur, fine noise, scanlines, and one-pixel red rules.
 - Compact controls, angular separators, and deliberately dense information hierarchy.
 - Panel modules appear as segmented data blocks instead of soft pills.
@@ -81,11 +81,12 @@ Use a maintained monochrome dark icon base with an Arasaka override layer for la
 
 ## Artwork
 
-Create an original "Mikoshi data core" composition in both 16:9 4K and 16:10 2560x1600 forms. It uses black architectural space, severe red geometry, Japanese corporate markings, scanlines, and an Arasaka emblem. Important visual elements stay inside safe areas so cropping on an unfamiliar external display remains intentional.
+Create an original "Mikoshi data core" composition in both 16:9 4K and 16:10 2560x1600 forms. It uses illuminated crimson/coral and cyan architectural space, severe geometry, restrained amber circuitry, Japanese corporate markings, scanlines, and an Arasaka emblem. Broad colored midtones cover the center and edges so narrow tiling gaps remain visible through the rain/fog shader, rather than relying on isolated neon lines against black. Important visual elements stay inside safe areas so cropping on an unfamiliar external display remains intentional.
 
 The desktop uses the native C++/OpenGL renderer from kde-shader-wallpaper with
 Heartfelt No Heart over the Mikoshi artwork. The effect retains rain, fog,
-refraction, and reduced-frequency lightning at 30 FPS and 75% speed. Mouse,
+refraction, and lightning in one of four original burst windows at 25% strength,
+with unchanged flash timing, at 30 FPS and 75% speed. Mouse,
 audio, and window-reactive inputs are disabled. The primary display receives the
 16:9 texture and other displays receive the 16:10 texture. The lock screen uses
 the same shader with the 16:9 texture and no clock through `apply-lockscreen`,
@@ -156,7 +157,7 @@ Keep exactly one virtual desktop and no workspace pager. Polonium manages window
 
 - Wide external displays default to a center-master/side-stack layout.
 - The internal display defaults to a simpler master-stack layout.
-- Inner and outer gaps default to 6 logical pixels.
+- Inner and outer gaps use KWin tile padding of 8 logical pixels.
 - Dialogs, launchers, authentication prompts, picture-in-picture windows, and transient utility windows float.
 - Existing standard KDE move, resize, fullscreen, and overview behavior remains available.
 

@@ -133,6 +133,36 @@ assets need no private-home access. The existing user-local plugin keeps its
 normal precedence for desktop sessions. The package preserves upstream licenses,
 shader headers, gallery attribution and local adaptation patches.
 
+To refresh only the login artwork and shader after migration, preserve the
+previously installed wallpaper `.deb` for asset rollback before rebuilding. The
+existing builder produces both packages, but install **only**
+`arasaka-login-wallpaper`; do not reinstall PLM or rerun `apply-plm`:
+
+```sh
+./bin/build-plm
+apt-get --simulate --reinstall --no-remove --no-install-recommends install \
+  ./build/plm/arasaka-login-wallpaper_1.0-1_amd64.deb
+```
+
+Proceed only if the simulation proposes one wallpaper-package reinstall, with no
+other package installations, upgrades, or removals. Run the privileged step
+yourself:
+
+```sh
+sudo apt-get --reinstall --no-remove --no-install-recommends install \
+  ./build/plm/arasaka-login-wallpaper_1.0-1_amd64.deb
+```
+
+The explicit local package and `--reinstall` are needed because its version stays
+`1.0-1`. It has no maintainer scripts or configuration files and does not restart
+the login manager. PLM's existing `/usr/share` paths load the colorful artwork and
+reduced-lightning shader at the next normal greeter start. Desktop and lock-screen
+assets are user-local and updated separately; login authentication, clock settings,
+and session configuration are unchanged. Do not restart PLM from the running
+desktop. To undo just an asset refresh, reinstall the saved previous wallpaper
+package rather than using the SDDM migration rollback below. Back up any local
+modifications to package-owned system assets separately before reinstalling.
+
 For this installation, the standalone TTY recovery command is:
 
 ```sh
@@ -342,10 +372,16 @@ floating. New windows still tile automatically. Super+left-drag and
 Super+right-drag remain KWin's move and resize controls; resizing a tiled window
 can still adjust the shared tile boundaries rather than detach it.
 
+KWin tile padding is **8 logical pixels** on every current screen, exposing the
+colored wallpaper between windows and around the screen edges. Klassy's thin
+outlines are disabled for both active and inactive windows; shadows, transparency,
+and hidden-titlebar behavior are unchanged.
+
 `bin/apply-live` persists these defaults. Polonium reads configuration when its
-script starts, so changing the defaults requires a script reload or a new login
-to affect an already-running instance. Its per-output settings menu can override
-the default layout for the current output/desktop/activity.
+script starts, so changing its layout defaults requires a script reload or a new
+login to affect an already-running instance. Padding and decoration settings can
+be refreshed live without restarting Polonium. Its per-output settings menu can
+override the default layout for the current output/desktop/activity.
 
 ## Authentication Prompts
 
@@ -432,6 +468,11 @@ selects TV Glitch again. Window and popup durations are set in
 The wallpaper uses **Heartfelt without the heart sequence**, over the existing
 Arasaka/Mikoshi artwork, through
 [kde-shader-wallpaper](https://github.com/y4my4my4m/kde-shader-wallpaper).
+Both wallpaper aspect ratios use illuminated crimson/coral architecture, cyan
+light channels, and small amber accents. Broad colored midtones extend through
+the center and screen edges so the 8 px tiling gaps remain distinct from dark
+windows, even under fog. The emblem, grid, and scanlines remain; application and
+window palettes are unchanged.
 All existing desktops use 30 FPS, full resolution, 75% shader playback speed, and
 pause for maximized/fullscreen windows on their respective screen. Mouse and
 audio capture, window-reactive shader input, playlists, and buffer passes are
@@ -502,10 +543,18 @@ Background fog uses cubic B-spline filtering across adjacent mip levels, with a
 one-level bias toward finer detail. This reduces blur modestly and avoids the
 visible mip-grid corners produced by the original single linear sample as fog
 increases. Rain, trails, and refraction retain their original timing. Lightning
-skips alternate burst windows without changing the remaining flashes' duration
-or intensity: roughly one burst every 34 seconds of active playback at 75% speed.
+keeps one in four original burst windows at 25% strength, without changing flash
+timing or the background's normal brightness. This gives roughly one burst every
+67 seconds of active playback at 75% speed: half the previous frequency and
+75% weaker flashes, avoiding harsh pulses over the brighter artwork.
 Generated PNGs and the complete upstream shader are not committed to this repo.
 The shader and artwork are configured with escaped, absolute `file://` URLs.
+
+`python3 tests/wallpaper_artwork_test.py` renders both SVGs and checks blurred
+horizontal/vertical gap samples for contrasting color against the dark window
+surface. It requires `rsvg-convert` and Python Pillow (`python3-pil` on Debian),
+and also runs under `make test`. GPU smoke checks below exercise the actual rain
+shader; the artwork check alone does not model its animated lighting.
 
 The gallery also offers **Tokyo** (`Xtf3zn`, Reinder Nijhoff) and **Dusti [237
 Chars]** (`tcXXDB`, HellMood). These are selectable alternatives, not changes to
@@ -571,9 +620,10 @@ to this command; display reconciliation handles layout/display priority, opt-in
 desktop-icon hiding, and shader initialization on non-shader desktops. Keep the
 paired runtime scripts together unless explicitly reverting that policy.
 
-The opt-in GPU check can isolate the blur's edge response, verify that alternate
-lightning bursts are absent and retained flashes are unchanged, and capture
-light/heavy fog at fixed animation times, including a simulated hour of playback:
+The opt-in GPU check can isolate the blur's edge response, verify that three of
+every four lightning burst windows are absent and retained flashes use 25%
+strength with unchanged timing, and capture light/heavy fog at fixed animation
+times, including a simulated hour of playback:
 
 ```sh
 python3 tests/shader_smoke.py --blur-check \

@@ -67,17 +67,21 @@ Item {
             compare(image.pixel(Math.floor(image.width / 2), Math.floor(image.height / 2)).a, 1)
         }
 
-        function test_lightning_skips_alternate_bursts() {
+        function test_lightning_keeps_one_in_four_burst_windows() {
             engine.iMouse = Qt.vector4d(0, -1, 0, 0)
             var frame = engine.iFrame
             tryVerify(() => engine.iFrame > frame + 3, 10000)
             verify(waitForRendering(engine, 5000))
             var image = grabImage(engine)
             var kept = 0, skipped = 0, keptError = 0, skippedError = 0
+            var activeByCycle = [0, 0, 0, 0, 0, 0, 0, 0]
             for (var x = 0; x < image.width; x++) {
                 var pixel = image.pixel(x, Math.floor(image.height / 2))
-                if (pixel.b > 0.5) {
-                    keptError = Math.max(keptError, Math.abs(pixel.r - pixel.g))
+                var cycle = Math.round(pixel.b * 8)
+                verify(cycle >= 0 && cycle < 8, "Must encode one of eight original burst windows")
+                if (Math.abs(pixel.g - 0.5) > 0.05) activeByCycle[cycle]++
+                if (cycle === 0 || cycle === 4) {
+                    keptError = Math.max(keptError, Math.abs((pixel.r - 0.5) - 0.25 * (pixel.g - 0.5)))
                     if (Math.abs(pixel.g - 0.5) > 0.05) kept++
                 } else {
                     skippedError = Math.max(skippedError, Math.abs(pixel.r - 0.5))
@@ -86,9 +90,10 @@ Item {
             }
             compare(engine.compileLog, "")
             console.log("Lightning samples kept/skipped:", kept, skipped, "errors:", keptError, skippedError)
+            verify(activeByCycle.every(count => count > 2), "Must sample active lightning in all eight windows")
             verify(kept > 10 && skipped > 10, "Must sample active lightning in both sets of cycles")
-            verify(keptError < 0.01, "Retained flashes must preserve their original intensity and duration")
-            verify(skippedError < 0.01, "Alternate lightning bursts must be absent")
+            verify(keptError < 0.01, "Retained flashes must use 25% strength with their original timing")
+            verify(skippedError < 0.01, "Three of every four lightning burst windows must be absent")
         }
 
         function cleanup() {

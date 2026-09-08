@@ -1,17 +1,65 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="2560" height="1600" viewBox="0 0 2560 1600">
   <defs>
-    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse"><path d="M64 0H0V64" fill="none" stroke="#737b86" stroke-width="1" opacity="0.12"/></pattern>
+    <linearGradient id="chamber" x1="0" y1="0" x2="1" y2="0.7">
+      <stop offset="0" stop-color="#872e46"/>
+      <stop offset="0.42" stop-color="#623c50"/>
+      <stop offset="0.67" stop-color="#245360"/>
+      <stop offset="1" stop-color="#147b88"/>
+    </linearGradient>
+    <radialGradient id="redHaze" cx="0.18" cy="0.42" r="0.72">
+      <stop offset="0" stop-color="#ff354e" stop-opacity="0.65"/>
+      <stop offset="1" stop-color="#ff354e" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="cyanHaze" cx="0.84" cy="0.55" r="0.7">
+      <stop offset="0" stop-color="#31dbdf" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#31dbdf" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="redPanel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#bc2e49"/>
+      <stop offset="0.46" stop-color="#a8394e"/>
+      <stop offset="1" stop-color="#733348"/>
+    </linearGradient>
+    <linearGradient id="cyanPanel" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#246779"/>
+      <stop offset="0.55" stop-color="#1a95a1"/>
+      <stop offset="1" stop-color="#225e70"/>
+    </linearGradient>
+    <linearGradient id="redGlow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff806e"/>
+      <stop offset="0.48" stop-color="#ff3344" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#e60012" stop-opacity="0.15"/>
+    </linearGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#79344d"/>
+      <stop offset="1" stop-color="#21576b"/>
+    </linearGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse"><path d="M64 0H0V64" fill="none" stroke="#b7e4df" stroke-width="1" opacity="0.1"/></pattern>
     <pattern id="scan" width="7" height="7" patternUnits="userSpaceOnUse"><path d="M0 1H7" stroke="#e8e9ea" opacity="0.03"/></pattern>
     <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="16" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
   </defs>
-  <rect width="2560" height="1600" fill="#07090c"/>
+  <rect width="2560" height="1600" fill="url(#chamber)"/>
+  <rect width="2560" height="1600" fill="url(#redHaze)"/>
+  <rect width="2560" height="1600" fill="url(#cyanHaze)"/>
+  <path d="M0 0H760L360 1600H0Z" fill="url(#redPanel)"/>
+  <path d="M2560 0H2180L2350 1600H2560Z" fill="url(#cyanPanel)"/>
+  <path d="M510 0H890L500 1600H110Z" fill="url(#redGlow)" opacity="0.62"/>
+  <path d="M1910 0H2180L2350 1600H2080Z" fill="url(#cyanPanel)" opacity="0.8"/>
   <rect width="2560" height="1600" fill="url(#grid)"/>
-  <path d="M0 0H760L360 1600H0Z" fill="#11151a"/>
-  <path d="M2560 0H2180L2350 1600H2560Z" fill="#11151a"/>
-  <path d="M510 0H890L500 1600H110Z" fill="#e60012" opacity="0.09"/>
+  <g fill="none" stroke-width="5" filter="url(#glow)">
+    <path d="M760 0L360 1600" stroke="#ff806e"/>
+    <path d="M2180 0L2350 1600" stroke="#69fff1"/>
+    <path d="M0 900H350L470 780H870" stroke="#ff5266" opacity="0.75"/>
+    <path d="M1690 690H2020L2150 820H2560" stroke="#42e8e0" opacity="0.8"/>
+  </g>
+  <g fill="none" stroke-width="1.5">
+    <path d="M810 0L410 1600M0 930H365L485 810H810" stroke="#ffb09c" opacity="0.5"/>
+    <path d="M2130 0L2300 1600M1750 720H2005L2135 850H2560" stroke="#83f7ee" opacity="0.55"/>
+    <path d="M0 390H440L550 280H880M2560 1220H2090L1960 1350H1620" stroke="#ffbd70" opacity="0.6"/>
+  </g>
   <g transform="translate(1280 690)" filter="url(#glow)">
-    <circle r="285" fill="none" stroke="#e60012" stroke-width="3" opacity="0.45"/>
-    <circle r="230" fill="#07090c" stroke="#e8e9ea" stroke-width="2"/>
+    <circle r="285" fill="none" stroke="#ff5266" stroke-width="3" opacity="0.8"/>
+    <circle r="298" fill="none" stroke="#69fff1" stroke-width="4" stroke-dasharray="277 1596" transform="rotate(-55)"/>
+    <circle r="230" fill="url(#core)" stroke="#e8e9ea" stroke-width="2"/>
     <g fill="#e8e9ea" stroke="#e60012" stroke-width="8">
       <path d="M0-184C-48-174-99-120-95-65-90-20-50 9 0 0 50 9 90-20 95-65 99-120 48-174 0-184Z"/>
       <path d="M160 92C174 46 153-25 103-49 62-68 17-46 0 0-33 38-28 88 8 116 51 150 129 137 160 92Z"/>
@@ -21,13 +69,14 @@
   </g>
   <g font-family="Rajdhani, sans-serif" fill="#e8e9ea">
     <text x="1280" y="1080" font-size="92" font-weight="700" text-anchor="middle" letter-spacing="24">ARASAKA</text>
-    <text x="1280" y="1145" font-size="27" text-anchor="middle" letter-spacing="12" fill="#e60012">荒坂 // MIKOSHI</text>
+    <text x="1280" y="1145" font-size="27" text-anchor="middle" letter-spacing="12" fill="#ff9a88">荒坂 // MIKOSHI</text>
     <text x="95" y="125" font-size="24" letter-spacing="6">SECURE MOBILE NODE</text>
-    <text x="2465" y="125" font-size="22" text-anchor="end" letter-spacing="5" fill="#e60012">ONLINE // 00:E6:12</text>
+    <text x="2465" y="125" font-size="22" text-anchor="end" letter-spacing="5" fill="#86fff0">ONLINE // 00:E6:12</text>
   </g>
-  <path d="M95 1430H760L815 1485H2465" fill="none" stroke="#e60012" stroke-width="3"/>
-  <path d="M95 1460H720" stroke="#e60012" stroke-width="10"/>
-  <g fill="#737b86" font-family="JetBrains Mono, monospace" font-size="14">
+  <path d="M95 1430H760L815 1485H2465" fill="none" stroke="#ff6470" stroke-width="3"/>
+  <path d="M95 1460H720" stroke="#ff6470" stroke-width="10"/>
+  <path d="M95 240h100m15 0h30m15 0h30M2290 1310h80m15 0h30m15 0h30" stroke="#ffbd70" stroke-width="6"/>
+  <g fill="#c0cccf" font-family="JetBrains Mono, monospace" font-size="14">
     <text x="95" y="1530">RELIC NETWORK // CLEARANCE S</text>
     <text x="2465" y="1530" text-anchor="end">CORPORATE PROPERTY</text>
   </g>

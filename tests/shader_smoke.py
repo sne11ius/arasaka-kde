@@ -51,11 +51,11 @@ def main():
             code = "#define mainImage rainImage\n#define iTime (iMouse.x)\n" + source
             code += "\n#undef mainImage\n#undef iTime\nvoid mainImage(out vec4 color, in vec2 p) {\n"
             code += "if (iMouse.y > 0.) { rainImage(color, p); return; }\n"
-            # Red is actual lightning, green the original, blue identifies retained cycles.
+            # Red is actual lightning, green the original, blue encodes the cycle for independent checks.
             code += "if (iMouse.y < 0.) { float t = p.x / iResolution.x * 50.2654824574;\n"
             code += lightning[0] + "\n"
             code += "float original = sin(t*sin(t*10.))*pow(max(0.,sin(t+sin(t))),10.);\n"
-            code += "color = vec4(.5+.5*lightning, .5+.5*original, 1.-mod(floor(t/6.28318530718),2.), 1.); return; }\n"
+            code += "color = vec4(.5+.5*lightning, .5+.5*original, floor(t/6.28318530718)/8., 1.); return; }\n"
             code += "vec2 UV = p / iResolution.xy, n = vec2(0); float focus = 6.;\n"
             code += "color = vec4(" + sample[1] + ", 1.);\n}\n"
             replacements.update(__SHADER_CODE__=json.dumps(code),

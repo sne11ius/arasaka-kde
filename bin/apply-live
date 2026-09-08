@@ -175,13 +175,8 @@ kwriteconfig6 --file klassy/klassyrc --group Windeco --key ColorizeWindowOutline
 kwriteconfig6 --file klassy/klassyrc --group TitleBarOpacity --key ActiveTitleBarOpacity 92 --notify
 kwriteconfig6 --file klassy/klassyrc --group TitleBarOpacity --key InactiveTitleBarOpacity 82 --notify
 kwriteconfig6 --file klassy/klassyrc --group TitleBarOpacity --key BlurTransparentTitleBars --type bool true --notify
-kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineStyleActive WindowOutlineCustomColor --notify
-kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineStyleInactive WindowOutlineCustomColor --notify
-kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineCustomColorActive '154,162,173' --notify
-kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineCustomColorInactive '154,162,173' --notify
-kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineCustomColorOpacityActive 100 --notify
-kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineCustomColorOpacityInactive 100 --notify
-kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineThickness 1 --notify
+kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineStyleActive WindowOutlineNone --notify
+kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineStyleInactive WindowOutlineNone --notify
 kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key Enabled --type bool true --notify
 kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key ExceptionWindowPropertyPattern '.*' --notify
 kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key ExceptionWindowPropertyType 0 --notify
@@ -233,7 +228,7 @@ qdbus6 org.kde.KWin /KWin org.kde.KWin.reconfigure
 tile_padding_script=$(mktemp)
 printf '%s\n' \
   'workspace.screens.forEach(screen => {' \
-  '    workspace.tilingForScreen(screen).rootTile.padding = 6;' \
+  '    workspace.tilingForScreen(screen).rootTile.padding = 8;' \
   '});' > "$tile_padding_script"
 qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript arasaka-tile-padding >/dev/null 2>&1 || true
 qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$tile_padding_script" arasaka-tile-padding >/dev/null
