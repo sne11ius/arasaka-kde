@@ -162,7 +162,8 @@ kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key types 1 --notify
 kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key wmclass '.*' --notify
 kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key wmclassmatch 3 --notify
 kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key noborder --type bool false --notify
-kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key noborderrule 2 --notify
+# Apply Initially, not Force: the Quake toggle must be allowed to set noBorder.
+kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key noborderrule 3 --notify
 
 "$repo_root/bin/apply-auth-window-rules"
 
@@ -177,12 +178,9 @@ kwriteconfig6 --file klassy/klassyrc --group TitleBarOpacity --key InactiveTitle
 kwriteconfig6 --file klassy/klassyrc --group TitleBarOpacity --key BlurTransparentTitleBars --type bool true --notify
 kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineStyleActive WindowOutlineNone --notify
 kwriteconfig6 --file klassy/klassyrc --group WindowOutlineStyle --key WindowOutlineStyleInactive WindowOutlineNone --notify
-kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key Enabled --type bool true --notify
-kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key ExceptionWindowPropertyPattern '.*' --notify
-kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key ExceptionWindowPropertyType 0 --notify
-kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key HideTitleBar Always --notify
-kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key ExceptionBorder --type bool true --notify
-kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key BorderSize None --notify
+# Retire the old catch-all titlebar suppression. Only the Stream Deck Quake
+# window is borderless, via its existing PID-scoped KWin script (not all Konsole).
+kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' --key Enabled --type bool false --notify
 kwriteconfig6 --file klassy/klassyrc --group Style --key FrameCornerRadius 1 --notify
 kwriteconfig6 --file klassy/klassyrc --group Style --key FrameCustomCornerRadius 2 --notify
 kwriteconfig6 --file klassy/klassyrc --group Style --key MenuOpacity 88 --notify

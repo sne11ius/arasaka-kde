@@ -374,8 +374,18 @@ can still adjust the shared tile boundaries rather than detach it.
 
 KWin tile padding is **8 logical pixels** on every current screen, exposing the
 colored wallpaper between windows and around the screen edges. Klassy's thin
-outlines are disabled for both active and inactive windows; shadows, transparency,
-and hidden-titlebar behavior are unchanged.
+outlines are disabled for both active and inactive windows; shadows and transparency
+are unchanged. Normal applications retain titlebars and window buttons. The old
+catch-all Klassy `Windeco Exception 0` is disabled on reapply; the frame rule uses
+**Apply Initially**, not **Force**, so it does not block window-specific changes.
+Only the Stream Deck **Quake Konsole** is intentionally borderless: the existing
+`streamdeck-scripts/konsole-quake-toggle.sh` identifies its separate process through
+`/tmp/konsole-quake.pid` and sets `noBorder=true` for that PID. Do not replace this
+with a Konsole-class or window-title exception: ordinary Konsole windows share the
+app ID, and terminal titles change. No desktop restart is needed for the decoration
+settings; reload KWin configuration. An already-running Quake window whose border
+state was overridden by the old Force rule needs its PID-scoped `noBorder=true`
+reapplied without restarting the terminal.
 
 `bin/apply-live` persists these defaults. Polonium reads configuration when its
 script starts, so changing its layout defaults requires a script reload or a new
