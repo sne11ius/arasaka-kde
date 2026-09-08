@@ -144,9 +144,12 @@ kwriteconfig6 --file kwinrc --group Plugins --key overviewEnabled --type bool tr
 kwriteconfig6 --file kwinrc --group Plugins --key wobblywindowsEnabled --type bool false --notify
 kwriteconfig6 --file kwinrc --group Windows --key BorderSnapZone 8 --notify
 kwriteconfig6 --file kwinrc --group Windows --key WindowSnapZone 8 --notify
-kwriteconfig6 --file kwinrc --group Script-polonium --key DefaultEngine 2 --notify
-kwriteconfig6 --file kwinrc --group Script-polonium --key ThreeColumnSide1Size 0.22 --notify
-kwriteconfig6 --file kwinrc --group Script-polonium --key ThreeColumnSide2Size 0.22 --notify
+kwriteconfig6 --file kwinrc --group Script-polonium --key DefaultEngine 0 --notify
+kwriteconfig6 --file kwinrc --group Script-polonium --key BTreeInsertionStyle 0 --notify
+kwriteconfig6 --file kwinrc --group Script-polonium --key BTreeSwapInsertSide --type bool true --notify
+kwriteconfig6 --file kwinrc --group Script-polonium --key BTreeRotateLayout --type bool false --notify
+kwriteconfig6 --file kwinrc --group Script-polonium --key BTreeInsertInActive --type bool false --notify
+kwriteconfig6 --file kwinrc --group Script-polonium --key WindowDragPolicy 2 --notify
 kwriteconfig6 --file kwinrc --group Script-polonium --key Borders 4 --notify
 kwriteconfig6 --file kwinrc --group Script-polonium --key IgnoreWindowClasses 'krunner, yakuake, kded, polkit, plasmashell, xwaylandvideobridge' --notify
 

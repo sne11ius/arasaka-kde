@@ -328,6 +328,25 @@ centered open/close/reopen, no remaining panels, unchanged wallpaper/icon policy
 and stable host identity after reapplying. Physical monitor unplug/replug and
 fresh login with the original owner display disconnected remain manual checks.
 
+## Window Tiling
+
+Polonium uses **Binary Tree** with **Shallow** insertion: new windows split the
+least-deep branches instead of filling a center-master/three-column layout.
+**Swap Insert Side** is enabled, so the third window splits the right half first;
+the fourth splits the left half. This also mirrors new-window placement within
+each split. Layout rotation and insertion into the active tile are disabled, so
+automatic placement follows the balanced tree independently of focus.
+
+**Window Dragging Policy: Never Tile** lets a window dragged out of its tile stay
+floating. New windows still tile automatically. Super+left-drag and
+Super+right-drag remain KWin's move and resize controls; resizing a tiled window
+can still adjust the shared tile boundaries rather than detach it.
+
+`bin/apply-live` persists these defaults. Polonium reads configuration when its
+script starts, so changing the defaults requires a script reload or a new login
+to affect an already-running instance. Its per-output settings menu can override
+the default layout for the current output/desktop/activity.
+
 ## Window Effects
 
 Open, close, minimize, and restore use **TV Glitch at 700 ms**. The global Plasma
