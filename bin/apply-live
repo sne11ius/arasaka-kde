@@ -247,7 +247,7 @@ if [[ -f "$HOME/.local/lib/x86_64-linux-gnu/plugins/kwin/effects/plugins/better_
   # KWin discovers this user plugin path at login; keep the loaded native effect alive until then.
   kwriteconfig6 --file kwinrc --group Plugins --key better_blur_dxEnabled --type bool true
   kwriteconfig6 --file kwinrc --group Plugins --key blurEnabled --type bool false
-  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key BlurStrength 13
+  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key BlurStrength 1
   kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key NoiseStrength 7
   kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key Brightness 86
   kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key Saturation 118
