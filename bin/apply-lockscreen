@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configure the existing lock-screen shader and hide its clock; never lock or restart."""
+"""Configure lock-screen Interactive Rain with passive hover and no clock; never lock or restart."""
 
 import argparse
 from datetime import datetime
@@ -54,12 +54,13 @@ def main():
 
     package = data / "plasma/wallpapers" / PLUGIN
     artwork = data / "wallpapers/Arasaka"
-    shader = artwork / "shaders/Heartfelt_No_Heart.frag"
+    shader = artwork / "shaders/Interactive_Rain.frag"
     texture = artwork / "mikoshi-16x9.png"
     native = package / "contents/ui/shaderwallpaper/libshaderwallpaperplugin.so"
     inputs = [shader, texture, native, package / "metadata.json", package / "contents/config/main.xml",
               package / "contents/ui/main.qml", package / "contents/ui/ShaderSystem.qml",
-              native.parent / "qmldir", native.parent / "PluginStatus.qml"]
+              native.parent / "qmldir", native.parent / "PluginStatus.qml",
+              native.parent / "shaderwallpaperplugin.qmltypes"]
     for path in inputs:
         check_path(path)
         if not path.is_file() or not os.access(path, os.R_OK):
@@ -75,8 +76,18 @@ def main():
     dependencies = subprocess.check_output(["ldd", str(native)], text=True)
     if "not found" in dependencies:
         raise ValueError(f"unresolved native wallpaper dependency:\n{dependencies}")
-    if re.search(r"^\s*#\s*define\s+HAS_HEART\b", shader.read_text(), re.MULTILINE):
-        raise ValueError("installed shader is not the no-heart variant")
+    if "// @arasaka-effect rain-v1" not in map(str.strip, shader.read_text().splitlines()):
+        raise ValueError("installed Interactive Rain shader is missing the exact native-rain marker")
+    # Check the generated native interface, not merely an ELF or matching filename.
+    components = re.split(r"\bComponent\s*\{", (native.parent / "shaderwallpaperplugin.qmltypes").read_text())
+    engine = next((part for part in components if re.search(
+        r'\bname\s*:\s*"ShaderEngine"', part.split("{", 1)[0])), "")
+    properties = re.findall(r"\bProperty\s*\{([^{}]*)\}", engine)
+    if not any(all(re.search(pattern, prop) for pattern in (
+            r'\bname\s*:\s*"rainLockScreenHost"', r'\btype\s*:\s*"bool"',
+            r'\bread\s*:\s*"rainLockScreenHost"', r'\bwrite\s*:\s*"setRainLockScreenHost"'))
+            and not re.search(r"\bisReadonly\s*:\s*true\b", prop) for prop in properties):
+        raise ValueError("installed native renderer lacks rainLockScreenHost; rebuild/install the shader wallpaper first")
 
     shell = read_config(config / "plasmashellrc", ["Shell"], "ShellPackage",
                         os.environ.get("PLASMA_DEFAULT_SHELL") or "org.kde.plasma.desktop")
@@ -94,7 +105,7 @@ def main():
         "selectedShaderPath": shader.as_uri(), "selectedShaderCode": "", "commonCode": "",
         "running": "true", "shaderSpeed": "0.75", "targetFps": "30", "resolutionScale": "1",
         "pauseMode": "3", "checkActiveScreen": "true", "excludeWindows": "",
-        "mouseEnabled": "false", "audioEnabled": "false", "windowsEnabled": "false",
+        "mouseEnabled": "true", "audioEnabled": "false", "windowsEnabled": "false",
         "playlistEnabled": "false", "enableShaderTweaks": "false", "watchSourceFile": "false",
         "useBufferA": "false", "useBufferB": "false", "useBufferC": "false", "useBufferD": "false",
         "iChannel0Enabled": "true", "iChannel0": texture.as_uri(), "imageChannel0": "0",
@@ -159,7 +170,7 @@ def main():
                 subprocess.run([*command, "--key", key, "--", expected], check=True)
                 if read_config(target, names, key, "ARASAKA_MISSING") != expected:
                     raise ValueError(f"live KConfig readback differs: {group}/{key}; backup: {backup}")
-    print("Lock-screen configuration verified: Heartfelt No Heart, 30 FPS, 75% speed, no clock/date.")
+    print("Lock-screen configuration verified: Interactive Rain with passive hover, 30 FPS, 75% speed, no clock/date.")
     print("Lock policy, authentication, desktop and PLM settings are unchanged. No lock, preview or restart was performed.")
     print("The next lock-screen start will load the configuration; rendering remains unobserved.")
 

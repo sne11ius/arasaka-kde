@@ -19,6 +19,7 @@ from urllib.parse import unquote, urlsplit
 
 PLUGIN = "online.knowmad.shaderwallpaper"
 SHADER = "Heartfelt_No_Heart.frag"
+RAIN = "Interactive_Rain.frag"
 MARKER = "ARASAKA_SHADER_WALLPAPER="
 
 
@@ -75,7 +76,7 @@ def main():
         # Validate every replacement and backup source before any live writes.
         sources = [(package_target, Path("package"), True)]
         sources += [(artwork / f"{name}.png", Path("artwork") / f"{name}.png", False) for name, _, _ in images]
-        sources += [(artwork / "shaders" / SHADER, Path("artwork/shaders") / SHADER, False)]
+        sources += [(artwork / "shaders" / name, Path("artwork/shaders") / name, False) for name in (SHADER, RAIN)]
         sources += [(config / name, Path(name), False) for name in ("plasma-org.kde.plasma.desktop-appletsrc", "plasmashellrc")]
         sources += [(home / ".local/libexec/arasaka-kde/layout.js", Path("runtime/layout.js"), False)]
         check_path(backups, directory=True)
@@ -86,7 +87,12 @@ def main():
                     check_path(child, child.is_dir())
     patch = repo / "assets/wallpapers/shaders/heartfelt-no-heart.patch"
     dusti_patch = repo / "assets/wallpapers/shaders/dusti.patch"
-    inputs = [patch, dusti_patch]
+    rain_patch = repo / "assets/wallpapers/shaders/interactive-rain.patch"
+    host_patch = repo / "assets/wallpapers/shaders/interactive-rain-host.patch"
+    rain_sources = [repo / "native/rain" / name for name in (
+        "dropletsimulation.h", "dropletsimulation.cpp", "rainfieldrenderer.h",
+        "rainfieldrenderer.cpp", "raininput.h", "raininput.cpp")]
+    inputs = [patch, dusti_patch, rain_patch, host_patch, *rain_sources]
     if args.stage_only:
         inputs += [repo / "bin/fetch-components", repo / "lib/common.sh",
                    Path(os.environ.get("ARASAKA_COMPONENT_MANIFEST", str(repo / "manifest/components.tsv")))]
@@ -94,8 +100,7 @@ def main():
         inputs += [repo / "plasma/shader-wallpaper.js", repo / "lib/arasaka_topology.py"]
     inputs += [repo / "assets/wallpapers" / f"{name}.svg" for name, _, _ in images]
     for path in inputs:
-        if args.stage_only:
-            check_path(path)
+        check_path(path)
         if not path.is_file() or not os.access(path, os.R_OK):
             raise ValueError(f"required readable input not found: {path}")
 
@@ -134,6 +139,14 @@ def main():
         if args.stage_only:
             for path in (source, *source.rglob("*")):
                 check_path(path, path.is_dir())
+        run("patch", "--batch", "--forward", "--fuzz=0", "-p1", "-d", str(source), "-i", str(host_patch))
+        rain_source = source / "src/rain"
+        check_path(rain_source, directory=True)
+        rain_source.mkdir(parents=True, exist_ok=True)
+        for path in rain_sources:
+            check_path(path)
+            check_path(rain_source / path.name)
+            shutil.copy2(path, rain_source / path.name)
         build = stage / "build"
         # System packages use system libraries, not CMake's uninstalled RPATH padding.
         run("cmake", "-S", str(source), "-B", str(build), "-DCMAKE_BUILD_TYPE=Release",
@@ -177,6 +190,16 @@ def main():
         if "mainImage" not in adapted or any(line not in adapted for line in original.splitlines()[:3]):
             raise ValueError("adapted shader lost its entry point or upstream license header")
 
+        shutil.copy2(shaders / SHADER, shaders / RAIN)
+        run("patch", "--batch", "--forward", "--fuzz=0", "-p1", "-d", str(shaders), "-i", str(rain_patch))
+        rain = (shaders / RAIN).read_text()
+        if (rain.splitlines().count("// @arasaka-effect rain-v1") != 1
+                or not re.search(r"^\s*uniform\s+sampler2D\s+iRainField\s*;", rain, re.MULTILINE)
+                or "mainImage" not in rain
+                or any(line not in rain for line in original.splitlines()[:3])
+                or re.search(r"^\s*#\s*define\s+HAS_HEART\b", rain, re.MULTILINE)):
+            raise ValueError("Interactive Rain shader is missing its native interface, entry point or upstream license header")
+
         dusti_path = ui / "Shaders/Dusti.frag"
         dusti_path.write_text(dusti_code, encoding="utf-8")
         run("patch", "--batch", "--forward", "--fuzz=0", "-p1", "-d", str(dusti_path.parent), "-i", str(dusti_patch))
@@ -202,6 +225,12 @@ def main():
              "license": "CC BY-NC-SA 3.0", "needsTextures": True,
              "description": "Arasaka's no-heart adaptation of Heartfelt (2017). CC BY-NC-SA 3.0; "
                             "rain over the Arasaka artwork in texture channel 0. Credits Dave Hoskins."},
+            {"id": "arasaka-interactive-rain", "name": "Interactive Rain", "author": "Martijn Steinrucken (BigWings)",
+             "sourceId": "ltffzl", "shaderPath": (artwork / "shaders" / RAIN).as_uri(), "category": "Nature",
+             "license": "CC BY-NC-SA 3.0", "needsTextures": True,
+             "description": "Arasaka's native droplet adaptation of Heartfelt (2017). CC BY-NC-SA 3.0; "
+                            "physical rain over artwork in texture channel 0. Hover forces require mouse input enabled. "
+                            "The native rain field is independent of A-D buffers. Credits Dave Hoskins."},
         ]
         for entry, code in zip(gallery, (tokyo, dusti_code)):
             # Routing is explicit so selecting an input-free shader cannot inherit the artwork channel.
@@ -268,7 +297,8 @@ def main():
                     raise ValueError("gallery ID collision; resolve duplicate shader identities before retrying")
         index_path.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
 
-        replacements = [(package, package_target), (shaders / SHADER, artwork / "shaders" / SHADER)]
+        replacements = [(package, package_target)]
+        replacements += [(shaders / name, artwork / "shaders" / name) for name in (SHADER, RAIN)]
         for name, width, height in images:
             png = stage / f"{name}.png"
             run("rsvg-convert", "--width", str(width), "--height", str(height), "--output", str(png),
@@ -341,40 +371,43 @@ def main():
             print("Shader wallpaper installed; no live session calls were made.", file=sys.stderr)
             return
         try:
-            output = run("qdbus6", "org.kde.plasmashell", "/PlasmaShell", "org.kde.PlasmaShell.evaluateScript",
-                         script, capture=True)
-            reports = [line[len(MARKER):] for line in output.splitlines() if line.startswith(MARKER)]
-            report = json.loads(reports[0]) if len(reports) == 1 else {}
-            if not isinstance(report, dict):
-                raise ValueError(f"invalid verification report: {output}")
-            desktops = report.get("desktops", [])
-            if (report.get("status") != "ok" or not desktops
-                    or len({d["id"] for d in desktops}) != len(desktops)
-                    or any(type(d["screen"]) is not int or d["screen"] < 0 for d in desktops)
-                    or report.get("primaryScreen") not in {d["screen"] for d in desktops}):
-                raise ValueError(f"invalid desktop verification result: {output}")
-            for desktop in desktops:
-                settings = desktop["config"]
-                image = "mikoshi-16x9.png" if desktop["screen"] == report["primaryScreen"] else "mikoshi-16x10.png"
-                expected = {
-                    "selectedShaderPath": (artwork / "shaders" / SHADER).as_uri(), "selectedShaderCode": "",
-                    "iChannel0": (artwork / image).as_uri(), "iChannel0Enabled": True, "imageChannel0": 0,
-                    "running": True, "shaderSpeed": 0.75, "targetFps": 30, "resolutionScale": 1,
-                    "pauseMode": 0, "checkActiveScreen": True, "excludeWindows": [],
-                    "mouseEnabled": False, "audioEnabled": False, "windowsEnabled": False,
-                    "playlistEnabled": False, "enableShaderTweaks": False, "commonCode": "",
-                    "useBufferA": False, "useBufferB": False, "useBufferC": False, "useBufferD": False,
-                    "iChannel1Enabled": False, "iChannel2Enabled": False, "iChannel3Enabled": False,
-                    "imageChannel1": -1, "imageChannel2": -1, "imageChannel3": -1,
-                }
-                if (desktop["wallpaperPlugin"] != PLUGIN or not isinstance(settings, dict)
-                        or any(settings.get(key) != value for key, value in expected.items())):
-                    raise ValueError(f"unexpected wallpaper verification result: {output}")
+            # A second evaluation gets fresh wrappers after the deferred plugin switch.
+            for phase in ("prepare", "activate"):
+                output = run("qdbus6", "org.kde.plasmashell", "/PlasmaShell", "org.kde.PlasmaShell.evaluateScript",
+                             script.replace("__SHADER_PHASE__", phase), capture=True)
+                reports = [line[len(MARKER):] for line in output.splitlines() if line.startswith(MARKER)]
+                report = json.loads(reports[0]) if len(reports) == 1 else {}
+                if not isinstance(report, dict):
+                    raise ValueError(f"invalid verification report: {output}")
+                desktops = report.get("desktops", [])
+                if (report.get("status") != ("prepared" if phase == "prepare" else "ok") or not desktops
+                        or len({d["id"] for d in desktops}) != len(desktops)
+                        or any(type(d["screen"]) is not int or d["screen"] < 0 for d in desktops)
+                        or report.get("primaryScreen") not in {d["screen"] for d in desktops}):
+                    raise ValueError(f"invalid desktop verification result: {output}")
+                for desktop in desktops:
+                    settings = desktop["config"]
+                    image = "mikoshi-16x9.png" if desktop["screen"] == report["primaryScreen"] else "mikoshi-16x10.png"
+                    expected = {
+                        "selectedShaderPath": (artwork / "shaders" / RAIN).as_uri(), "selectedShaderCode": "",
+                        "iChannel0": (artwork / image).as_uri(), "iChannel0Enabled": True, "imageChannel0": 0,
+                        "running": True, "shaderSpeed": 0.75, "targetFps": 30, "resolutionScale": 1,
+                        "pauseMode": 0, "checkActiveScreen": True, "excludeWindows": [],
+                        "mouseEnabled": phase == "activate", "audioEnabled": False, "windowsEnabled": False,
+                        "playlistEnabled": False, "enableShaderTweaks": False, "commonCode": "",
+                        "useBufferA": False, "useBufferB": False, "useBufferC": False, "useBufferD": False,
+                        "iChannel1Enabled": False, "iChannel2Enabled": False, "iChannel3Enabled": False,
+                        "imageChannel1": -1, "imageChannel2": -1, "imageChannel3": -1,
+                    }
+                    if (desktop["wallpaperPlugin"] != PLUGIN or not isinstance(settings, dict)
+                            or any(settings.get(key) != value for key, value in expected.items())):
+                        raise ValueError(f"unexpected wallpaper verification result: {output}")
         except (subprocess.CalledProcessError, ValueError, KeyError, TypeError) as error:
             raise ValueError(f"wallpaper activation verification failed: {error}; backup: {backup}. "
                              "If Plasma has not discovered the plugin, explicitly restart Plasma or log out/in, then rerun. "
                              "Plasma was not restarted automatically.") from error
-        print(f"Verified wallpaper configuration on {len(desktops)} desktop(s) at 30 FPS; mouse/audio capture disabled.", file=sys.stderr)
+        print(f"Verified Interactive Rain configuration on {len(desktops)} desktop(s), target 30 FPS; "
+              "hover enabled, audio capture disabled.", file=sys.stderr)
         print("Configuration readback does not prove rendering. An already-loaded native plugin/QML may need an explicit "
               "Plasma restart after replacement; no automatic restart was performed.", file=sys.stderr)
 

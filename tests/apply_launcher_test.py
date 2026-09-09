@@ -77,6 +77,10 @@ elif tool == "qdbus6":
                 print("Error: broken layout", file=sys.stderr)
                 sys.exit(1)
             (root / "ready").touch()
+            if os.environ.get("DESKTOP_STATE"):
+                sys.path.insert(0, os.environ["TEST_MODULES"])
+                from apply_shader_wallpaper_test import PLASMA
+                sys.exit(subprocess.run(["node", "-e", PLASMA, args[-1]]).returncode)
     else:
         sys.exit(93)
 '''
@@ -255,6 +259,68 @@ with patch("time.monotonic", clock), patch("time.sleep", advance):
             result = self.run_installer(WATCHER=state)
             self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(any("start" in c or "enable" in c for c in self.calls()))
+
+    def test_pre_rain_launcher_publication_keeps_watcher_layout_working(self):
+        artwork = self.data / "wallpapers/Arasaka"
+        old_assets = [artwork / "shaders/Heartfelt_No_Heart.frag",
+                      artwork / "mikoshi-16x9.png", artwork / "mikoshi-16x10.png",
+                      self.data / "plasma/wallpapers/online.knowmad.shaderwallpaper/contents/ui/shaderwallpaper/libshaderwallpaperplugin.so"]
+        for asset in old_assets:
+            self.write(asset, "preceding installed asset\n")
+        initial = [{"id": 12, "screen": 0, "wallpaperPlugin": "online.knowmad.shaderwallpaper",
+                    "config": {"selectedShaderPath": "file:///custom.frag", "targetFps": 17, "mouseEnabled": False}},
+                   {"id": 27, "screen": 0, "wallpaperPlugin": "org.kde.image", "config": {"keep": True}}]
+        desktop_state = self.session / "desktops.json"
+        environment = {**self.env, "DESKTOP_STATE": str(desktop_state),
+                       "TEST_MODULES": str(ROOT / "tests"), "PYTHONDONTWRITEBYTECODE": "1", "CHECK_PRIVACY": "1"}
+        command = [str(self.runtime / "reconcile-displays"), "--hide-desktop-icons", "--ensure-shader-wallpaper"]
+        for args in (("--install-only",), ()):
+            with self.subTest(args=args):
+                self.write(desktop_state, json.dumps(initial))
+                result = self.run_installer(*args)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse((self.session / "arasaka-display-reconcile.path.stopped").exists())
+                before = len(self.calls())
+                result = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("deferred", result.stderr)
+                evaluations = [c[-1] for c in self.calls()[before:] if "org.kde.PlasmaShell.evaluateScript" in c]
+                self.assertEqual(len(evaluations), 1, "layout must run, even when new wallpaper cannot be initialized")
+                self.assertIn("var hideDesktopIcons = true;", evaluations[0])
+                self.assertNotIn("ARASAKA_SHADER_WALLPAPER=", evaluations[0])
+                self.assertEqual(json.loads(desktop_state.read_text()), initial)
+                self.assertTrue((self.state / "arasaka-kde/topology").is_file())
+                for asset in old_assets:
+                    self.assertEqual(asset.read_text(), "preceding installed asset\n")
+                self.assertFalse((artwork / "shaders/Interactive_Rain.frag").exists())
+        # Readiness is evaluated anew even with the already-recorded topology signature.
+        self.write(artwork / "shaders/Interactive_Rain.frag", "new staged asset\n")
+        result = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        desktops = json.loads(desktop_state.read_text())
+        self.assertEqual(desktops[0], initial[0])
+        self.assertEqual(desktops[1]["wallpaperPlugin"], "online.knowmad.shaderwallpaper")
+        self.assertTrue(desktops[1]["config"]["mouseEnabled"])
+        self.assertFalse(desktops[1]["config"]["arasakaRainPending"])
+
+    def test_apply_live_build_failure_does_not_break_published_runtime(self):
+        # Execute the real publication prefix and shader-build call, excluding unrelated rice.
+        source = (self.repo / "bin/apply-live").read_text()
+        prefix = source.split("install_upstream_visuals() {", 1)[0]
+        shader_call = next(line for line in source.splitlines() if line == '"$repo_root/bin/apply-shader-wallpaper"')
+        self.write(self.repo / "bin/apply-live-wallpaper-test", prefix + shader_call + "\n", 0o755)
+        self.write(self.repo / "bin/apply-shader-wallpaper",
+                   '#!/usr/bin/env bash\nprintf "fixture native build failed\\n" >&2\nexit 42\n', 0o755)
+        result = subprocess.run([str(self.repo / "bin/apply-live-wallpaper-test")],
+                                env=self.env, text=True, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 42, result.stderr)
+        self.assertFalse((self.session / "arasaka-display-reconcile.path.stopped").exists())
+        result = subprocess.run([str(self.runtime / "reconcile-displays"), "--hide-desktop-icons", "--ensure-shader-wallpaper"],
+                                env=self.env, text=True, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("deferred", result.stderr)
+        self.assertEqual((self.session / "attempts").read_text(), "1")
+        self.assertEqual((self.config / "plasmashellrc").read_text(), "original shell\n")
 
     def test_install_only_backs_up_and_stages_package_including_config_schema(self):
         self.write(self.package / "contents/config/main.xml", "previous schema\n")

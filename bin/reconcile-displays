@@ -93,9 +93,17 @@ if $ensure_shader_wallpaper; then
   for asset in "$shader_layout" \
     "$data_home/plasma/wallpapers/online.knowmad.shaderwallpaper/contents/ui/shaderwallpaper/libshaderwallpaperplugin.so" \
     "$data_home/wallpapers/Arasaka/shaders/Heartfelt_No_Heart.frag" \
+    "$data_home/wallpapers/Arasaka/shaders/Interactive_Rain.frag" \
     "$data_home/wallpapers/Arasaka/mikoshi-16x9.png" \
     "$data_home/wallpapers/Arasaka/mikoshi-16x10.png"; do
-    [[ -r $asset && -s $asset ]] || { printf 'error: required shader asset missing: %s\n' "$asset" >&2; exit 1; }
+    if [[ ! -r $asset || ! -s $asset ]]; then
+      # Launcher-only updates publish this runtime without installing wallpapers. Keep
+      # topology/layout usable during that upgrade (or a failed full-theme build), but
+      # never assign an unavailable effect. The watcher rechecks readiness on every run.
+      printf 'warning: shader wallpaper setup deferred; required asset missing: %s\n' "$asset" >&2
+      ensure_shader_wallpaper=false
+      break
+    fi
   done
 fi
 
@@ -127,16 +135,21 @@ if $ensure_shader_wallpaper; then
   shader_script=${shader_script/__PRIMARY_CONNECTOR_JSON__/"$(jq -cn --arg value "$primary" '$value')"}
   shader_script=${shader_script/__ENABLED_CONNECTORS_JSON__/"$(jq -c '.signature | fromjson | .enabled' <<<"$plan_json")"}
   shader_script=${shader_script/__ENSURE_ONLY__/true}
-  # One synchronous evaluation prevents a desktop appearing between icon hiding
-  # and wallpaper coverage checks. Retarget the launcher even if coverage fails.
-  report=$(qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$script"$'\n'"$shader_script")
-  [[ $report == ARASAKA_SHADER_WALLPAPER=* ]] &&
-    jq -e '.status == "ok" and (.desktops | length > 0) and
-      all(.desktops[]; .wallpaperPlugin == "online.knowmad.shaderwallpaper")' \
-      <<<"${report#ARASAKA_SHADER_WALLPAPER=}" >/dev/null || {
-        printf 'error: shader wallpaper verification failed: %s\n' "$report" >&2
-        exit 1
-      }
+  # Commit the deferred wallpaper switch before a fresh wrapper can enable hover.
+  # Each phase pairs icon policy with coverage checks, including newly appeared desktops.
+  for phase in prepare activate; do
+    expected_status=prepared
+    [[ $phase == prepare ]] || expected_status=ok
+    report=$(qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript \
+      "$script"$'\n'"${shader_script/__SHADER_PHASE__/$phase}")
+    [[ $report == ARASAKA_SHADER_WALLPAPER=* ]] &&
+      jq -e --arg status "$expected_status" '.status == $status and (.desktops | length > 0) and
+        all(.desktops[]; .wallpaperPlugin == "online.knowmad.shaderwallpaper")' \
+        <<<"${report#ARASAKA_SHADER_WALLPAPER=}" >/dev/null || {
+          printf 'error: shader wallpaper verification failed: %s\n' "$report" >&2
+          exit 1
+        }
+  done
 else
   qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$script"
 fi

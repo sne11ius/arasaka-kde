@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.16)
+project(ArasakaRainPhysicsTests LANGUAGES CXX)
+
+enable_testing()
+add_executable(dropletsimulation_test dropletsimulation_test.cpp ../dropletsimulation.cpp)
+target_include_directories(dropletsimulation_test PRIVATE ..)
+target_compile_features(dropletsimulation_test PRIVATE cxx_std_20)
+set_target_properties(dropletsimulation_test PROPERTIES CXX_EXTENSIONS OFF)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(dropletsimulation_test PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME dropletsimulation COMMAND dropletsimulation_test)
+set_tests_properties(dropletsimulation PROPERTIES TIMEOUT 120)

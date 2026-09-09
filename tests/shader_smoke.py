@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -16,14 +17,25 @@ def main():
     parser.add_argument("--shader", type=Path, required=True)
     parser.add_argument("--texture", type=Path, required=True)
     parser.add_argument("--screenshot", type=Path, required=True)
-    parser.add_argument("--blur-check", action="store_true", help="test Heartfelt's blur, lightning and fixed animation times")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--blur-check", action="store_true", help="test Heartfelt's blur, lightning and fixed animation times")
+    modes.add_argument("--rain-check", action="store_true", help="test native rain's committed mode, animation and lifecycle")
+    parser.add_argument("--previous-native", type=Path,
+                        help="test updated Rain host QML against a read-only previous native module directory")
     args = parser.parse_args()
+    if args.previous_native and not args.rain_check:
+        parser.error("--previous-native requires --rain-check")
     native = args.package.resolve() / "contents/ui/shaderwallpaper"
     for path in (native / "libshaderwallpaperplugin.so", args.shader, args.texture):
         if not path.is_file():
             parser.error(f"required file missing: {path}")
     with tempfile.TemporaryDirectory(prefix="arasaka-shader-smoke-") as directory:
         stage = Path(directory)
+        if args.previous_native:
+            ui = stage / "ui"
+            shutil.copytree(native.parent, ui, ignore=shutil.ignore_patterns("shaderwallpaper"))
+            native = ui / "shaderwallpaper"
+            shutil.copytree(args.previous_native, native)
         # A nonempty sandbox library prevents fallback to the live shader index.
         library = stage / "data/plasma/wallpapers/online.knowmad.shaderwallpaper/contents/ui/Shaders"
         library.mkdir(parents=True)
@@ -60,7 +72,12 @@ def main():
             code += "color = vec4(" + sample[1] + ", 1.);\n}\n"
             replacements.update(__SHADER_CODE__=json.dumps(code),
                                 __EDGE_URL__=json.dumps((stage / "edge.png").as_uri()))
-        qml = Path(__file__).with_name("blur_checks.qml" if args.blur_check else "shader_checks.qml").read_text()
+        if args.rain_check:
+            replacements["__LOCK_HOST_SUPPORTED__"] = json.dumps(not bool(args.previous_native))
+            replacements["__SHADER_CODE__"] = json.dumps(args.shader.read_text())
+            replacements["__SYSTEM_URL__"] = json.dumps((native.parent / "ShaderSystem.qml").as_uri())
+        checks = "rain_checks.qml" if args.rain_check else "blur_checks.qml" if args.blur_check else "shader_checks.qml"
+        qml = Path(__file__).with_name(checks).read_text()
         for key, value in replacements.items():
             qml = qml.replace(key, value)
         test = stage / "tst_shader.qml"

@@ -1,3 +1,4 @@
+import difflib
 import hashlib
 import json
 import os
@@ -14,6 +15,10 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = "online.knowmad.shaderwallpaper"
 SHADER = "Heartfelt_No_Heart.frag"
+RAIN = "Interactive_Rain.frag"
+PENDING = "arasakaRainPending"
+RAIN_SOURCES = ("dropletsimulation.h", "dropletsimulation.cpp", "rainfieldrenderer.h",
+                "rainfieldrenderer.cpp", "raininput.h", "raininput.cpp")
 HEADER = "// Heartfelt - by Martijn Steinrucken aka BigWings - 2017\n"
 LICENSE = "// License Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.\n"
 
@@ -23,43 +28,58 @@ const fs = require('fs');
 const vm = require('vm');
 const state = JSON.parse(fs.readFileSync(process.env.DESKTOP_STATE, 'utf8'));
 const mutations = [];
+const wrappers = [];
 const context = {
-    desktops: () => state.map(d => ({
-        id: d.id, screen: d.screen,
-        get wallpaperPlugin() { return d.wallpaperPlugin; },
-        set wallpaperPlugin(value) {
-            mutations.push({id: d.id, operation: 'wallpaperPlugin', value});
+    desktops: () => state.map(d => {
+        let selectedPlugin = d.wallpaperPlugin;
+        wrappers.push(() => {
+            if (selectedPlugin === d.wallpaperPlugin) return;
+            mutations.push({id: d.id, operation: 'wallpaperCommit', value: selectedPlugin, config: {...d.config}});
             if (process.env.CHECK_PRIVACY && (d.config.audioEnabled || d.config.mouseEnabled ||
                     d.config.windowsEnabled || d.config.playlistEnabled)) {
-                throw Error('capture/playlist enabled when loading wallpaper');
+                throw Error('capture/playlist enabled when committing wallpaper');
             }
-            d.wallpaperPlugin = value;
+            if (!process.env.REJECT_PLUGIN_COMMIT) d.wallpaperPlugin = selectedPlugin;
+        });
+        return {
+        id: d.id, screen: d.screen,
+        get wallpaperPlugin() { return selectedPlugin; },
+        set wallpaperPlugin(value) {
+            mutations.push({id: d.id, operation: 'wallpaperPlugin', value, config: {...d.config}});
+            selectedPlugin = value;
         },
         configGroup: [],
         get currentConfigGroup() { return this.configGroup; },
         set currentConfigGroup(value) {
-            mutations.push({id: d.id, operation: 'currentConfigGroup', value});
             this.configGroup = value;
         },
         writeConfig(key, value) {
-            mutations.push({id: d.id, operation: 'writeConfig', key, value});
+            mutations.push({id: d.id, operation: 'writeConfig', key, value, activePlugin: d.wallpaperPlugin});
             if (JSON.stringify(this.currentConfigGroup) !==
                 JSON.stringify(['Wallpaper', 'online.knowmad.shaderwallpaper', 'General'])) {
                 throw Error('unexpected configuration group');
             }
-            if (key !== process.env.REJECT_SETTING) d.config[key] = value;
+            if (key !== process.env.REJECT_SETTING && !(process.env.REJECT_MOUSE_ENABLE &&
+                    key === 'mouseEnabled' && value === true)) d.config[key] = value;
         },
         readConfig(key, fallback) {
             if (!(key in d.config)) return fallback;
             // Plasma's KConfig readEntry converts to the fallback's type.
             return fallback === undefined || typeof fallback === 'string' ? String(d.config[key]) : d.config[key];
         }
-    })),
+    }; }),
     screenForConnector: connector => ({'eDP-1': 0, 'HDMI-A-1': 1, 'DP-1': 2}[connector] ?? -1),
     print: value => console.log(value)
 };
+let failure;
+const output = [];
+context.print = value => output.push(value);
 try { vm.runInNewContext(process.argv[1], context); }
-catch (error) { console.log('Error: ' + error.message); }
+catch (error) { failure = error; }
+// Plasma applies cached wallpaper assignments at wrapper destruction, even on error.
+try { wrappers.forEach(commit => commit()); }
+catch (error) { failure = error; }
+console.log(failure ? 'Error: ' + failure.message : output.join('\n'));
 fs.writeFileSync(process.env.DESKTOP_STATE, JSON.stringify(state));
 if (process.env.MUTATION_LOG) fs.writeFileSync(process.env.MUTATION_LOG, JSON.stringify(mutations));
 """
@@ -84,7 +104,7 @@ class ShaderWallpaperScriptTests(unittest.TestCase):
             {"id": 42, "screen": 2, "wallpaperPlugin": "org.kde.image", "config": {}},
         ]
 
-    def run_template(self, desktops, ensure_only=True, connectors=("eDP-1", "HDMI-A-1", "DP-1"), **env):
+    def run_template(self, desktops, ensure_only=True, connectors=("eDP-1", "HDMI-A-1", "DP-1"), phase=None, **env):
         script = (ROOT / "plasma/shader-wallpaper.js").read_text()
         for key, value in {"DATA_HOME": str(self.data), "PRIMARY_CONNECTOR": "HDMI-A-1",
                            "ENABLED_CONNECTORS": connectors}.items():
@@ -95,12 +115,17 @@ class ShaderWallpaperScriptTests(unittest.TestCase):
         mutations = self.base / "mutations.json"
         state.write_text(json.dumps(desktops))
         environment = dict(os.environ, DESKTOP_STATE=str(state), MUTATION_LOG=str(mutations))
-        for name in ("CHECK_PRIVACY", "REJECT_SETTING"):
+        for name in ("CHECK_PRIVACY", "REJECT_SETTING", "REJECT_MOUSE_ENABLE", "REJECT_PLUGIN_COMMIT"):
             environment.pop(name, None)
-        result = subprocess.run(["node", "-e", PLASMA, script], env=dict(environment, **env),
-                                text=True, capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        return result.stdout.strip(), json.loads(state.read_text()), json.loads(mutations.read_text())
+        events = []
+        for current_phase in ((phase,) if phase else ("prepare", "activate")):
+            result = subprocess.run(["node", "-e", PLASMA, script.replace("__SHADER_PHASE__", current_phase)],
+                                    env=dict(environment, **env), text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            events += [dict(event, phase=current_phase) for event in json.loads(mutations.read_text())]
+            if result.stdout.startswith("Error:"):
+                break
+        return result.stdout.strip(), json.loads(state.read_text()), events
 
     def test_ensure_initializes_three_active_screens_but_preserves_custom_shader_and_parked_desktop(self):
         parked = {"id": 99, "screen": -1, "wallpaperPlugin": "org.kde.image", "config": {"keep": True}}
@@ -120,10 +145,10 @@ class ShaderWallpaperScriptTests(unittest.TestCase):
                                          report["desktops"][1:]):
             self.assertEqual(desktop["wallpaperPlugin"], PLUGIN)
             for key, value in {
-                "selectedShaderPath": (self.data / "wallpapers/Arasaka/shaders" / SHADER).as_uri(),
+                "selectedShaderPath": (self.data / "wallpapers/Arasaka/shaders" / RAIN).as_uri(),
                 "selectedShaderCode": "", "running": True, "shaderSpeed": 0.75, "targetFps": 30,
                 "iChannel0": (self.data / "wallpapers/Arasaka" / image).as_uri(),
-                "mouseEnabled": False, "audioEnabled": False, "windowsEnabled": False, "playlistEnabled": False,
+                "mouseEnabled": True, "audioEnabled": False, "windowsEnabled": False, "playlistEnabled": False,
             }.items():
                 self.assertEqual(desktop["config"][key], value, key)
                 self.assertEqual(entry["config"][key], value, key)
@@ -158,13 +183,121 @@ class ShaderWallpaperScriptTests(unittest.TestCase):
     def test_explicit_and_unrendered_modes_reset_existing_shader_settings(self):
         for ensure_only in (False, None):
             with self.subTest(ensure_only=ensure_only):
-                output, desktops, mutations = self.run_template(self.desktops, ensure_only=ensure_only)
+                output, desktops, mutations = self.run_template(self.desktops, ensure_only=ensure_only, CHECK_PRIVACY="1")
                 self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
                 self.assertEqual({mutation["id"] for mutation in mutations}, {12, 27, 42})
                 self.assertEqual(desktops[0]["config"]["selectedShaderPath"],
-                                 (self.data / "wallpapers/Arasaka/shaders" / SHADER).as_uri())
+                                 (self.data / "wallpapers/Arasaka/shaders" / RAIN).as_uri())
                 self.assertEqual(desktops[0]["config"]["selectedShaderCode"], "")
                 self.assertEqual(desktops[0]["config"]["targetFps"], 30)
+                for desktop in desktops:
+                    self.assertIs(desktop["config"]["mouseEnabled"], True)
+                    self.assertIs(desktop["config"][PENDING], False)
+                    events = [event for event in mutations if event["id"] == desktop["id"]]
+                    enables = [event for event in events if event.get("key") == "mouseEnabled" and event["value"] is True]
+                    self.assertEqual(len(enables), 1)
+                    self.assertEqual(enables[0]["phase"], "activate")
+                    self.assertEqual(enables[0]["activePlugin"], PLUGIN)
+                    for event in events:
+                        if event["operation"] == "wallpaperCommit":
+                            self.assertEqual(event["phase"], "prepare")
+                            self.assertEqual(event["config"]["selectedShaderPath"],
+                                             (self.data / "wallpapers/Arasaka/shaders" / RAIN).as_uri())
+                            self.assertEqual(event["config"]["selectedShaderCode"], "")
+                            self.assertIs(event["config"]["mouseEnabled"], False)
+
+    def test_prepare_commits_with_mouse_off_and_interruption_resumes_only_pending_targets(self):
+        output, prepared, events = self.run_template(self.desktops, phase="prepare", CHECK_PRIVACY="1")
+        self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
+        self.assertEqual(json.loads(output.removeprefix("ARASAKA_SHADER_WALLPAPER="))["status"], "prepared")
+        self.assertEqual(prepared[0], self.desktops[0])
+        self.assertEqual(sum(event["operation"] == "wallpaperCommit" for event in events), 2)
+        for desktop in prepared[1:]:
+            self.assertEqual(desktop["wallpaperPlugin"], PLUGIN)
+            self.assertIs(desktop["config"]["mouseEnabled"], False)
+            self.assertIs(desktop["config"][PENDING], True)
+        output, resumed, events = self.run_template(prepared, CHECK_PRIVACY="1")
+        self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
+        self.assertEqual(resumed[0], self.desktops[0])
+        self.assertFalse(any(event["operation"] == "wallpaperPlugin" for event in events))
+        for desktop in resumed[1:]:
+            self.assertIs(desktop["config"]["mouseEnabled"], True)
+            self.assertIs(desktop["config"][PENDING], False)
+
+    def test_fresh_evaluation_rejects_uncommitted_plugin_without_optin_and_retries(self):
+        output, failed, events = self.run_template(self.desktops, REJECT_PLUGIN_COMMIT="1", CHECK_PRIVACY="1")
+        self.assertTrue(output.startswith("Error:"), output)
+        self.assertIn("plugin mismatch", output)
+        self.assertEqual(failed[1]["wallpaperPlugin"], "org.kde.image")
+        self.assertIs(failed[1]["config"][PENDING], True)
+        self.assertFalse(any(event.get("key") == "mouseEnabled" and event["value"] is True for event in events))
+        output, resumed, _ = self.run_template(failed, CHECK_PRIVACY="1")
+        self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
+        self.assertIs(resumed[1]["config"]["mouseEnabled"], True)
+
+    def test_pending_custom_changes_are_preserved_in_both_phases_and_on_retry(self):
+        for key, value in (("selectedShaderPath", "file:///user-selected.frag"),
+                           ("selectedShaderCode", "user edited inline shader"),
+                           ("targetFps", 17), ("audioEnabled", True), ("useBufferA", True)):
+            for ensure_only in (True, False):
+                with self.subTest(key=key, ensure_only=ensure_only):
+                    output, prepared, _ = self.run_template(self.desktops, phase="prepare", ensure_only=ensure_only)
+                    self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
+                    prepared[1]["config"][key] = value
+                    cancelled = dict(prepared[1], config=dict(prepared[1]["config"], **{PENDING: False}))
+                    output, result, events = self.run_template(prepared, phase="activate", ensure_only=ensure_only)
+                    self.assertEqual(result[1], cancelled if ensure_only else prepared[1])
+                    self.assertTrue(all(event.get("key") == PENDING and event["value"] is False
+                                        for event in events if event["id"] == 27))
+                    if not ensure_only:
+                        self.assertTrue(output.startswith("Error:"), output)
+                    output, retried, events = self.run_template(result)
+                    self.assertEqual(retried[1], cancelled)
+                    self.assertTrue(all(event.get("key") == PENDING and event["value"] is False
+                                        for event in events if event["id"] == 27))
+
+    def test_activation_rechecks_coverage_before_any_optin(self):
+        output, prepared, _ = self.run_template(self.desktops, phase="prepare")
+        self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
+        prepared[2]["screen"] = -1
+        output, result, events = self.run_template(prepared, phase="activate")
+        self.assertTrue(output.startswith("Error:"), output)
+        self.assertIn("DP-1", output)
+        self.assertEqual(result, prepared)
+        self.assertEqual(events, [])
+
+    def test_changed_selection_cancels_pending_optin_even_if_user_returns_to_rain(self):
+        output, prepared, _ = self.run_template(self.desktops, phase="prepare")
+        self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
+        rain_path = prepared[1]["config"]["selectedShaderPath"]
+        prepared[1]["config"]["selectedShaderPath"] = "file:///chosen-in-gallery.frag"
+        output, changed, _ = self.run_template(prepared)
+        self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
+        self.assertEqual(changed[1]["config"]["selectedShaderPath"], "file:///chosen-in-gallery.frag")
+        changed[1]["config"]["selectedShaderPath"] = rain_path
+        output, returned, events = self.run_template(changed)
+        self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
+        self.assertIs(returned[1]["config"]["mouseEnabled"], False)
+        self.assertFalse(any(event["id"] == 27 for event in events))
+
+    def test_activate_never_initializes_an_unprepared_desktop(self):
+        output, result, events = self.run_template(self.desktops, phase="activate")
+        self.assertTrue(output.startswith("Error:"), output)
+        self.assertEqual(result, self.desktops)
+        self.assertEqual(events, [])
+
+    def test_failed_hover_enable_is_verified_and_initialization_remains_retryable(self):
+        desktops = self.desktops
+        for _ in range(2):
+            output, desktops, _ = self.run_template(desktops, REJECT_MOUSE_ENABLE="1", CHECK_PRIVACY="1")
+            self.assertTrue(output.startswith("Error:"), output)
+            self.assertIn("desktop 27: mouseEnabled", output)
+            self.assertEqual(desktops[1]["wallpaperPlugin"], PLUGIN)
+            self.assertIs(desktops[1]["config"]["mouseEnabled"], False)
+            self.assertIs(desktops[1]["config"][PENDING], True)
+        output, desktops, _ = self.run_template(desktops, CHECK_PRIVACY="1")
+        self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
+        self.assertIs(desktops[1]["config"]["mouseEnabled"], True)
 
     def test_ensure_keeps_readback_checks_for_initialized_desktops(self):
         desktops = self.desktops
@@ -194,7 +327,7 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         self.backups = self.state / "arasaka-kde/backups"
         self.tools = self.base / "tools"
         for directory in (self.repo / "bin", self.repo / "lib", self.repo / "plasma",
-                          self.repo / "assets/wallpapers/shaders", self.home,
+                          self.repo / "assets/wallpapers/shaders", self.repo / "native/rain", self.home,
                           self.config, self.tools, self.base / "tmp"):
             directory.mkdir(parents=True, exist_ok=True)
         for relative in ("bin/fetch-components", "lib/common.sh", "lib/arasaka_topology.py",
@@ -235,11 +368,37 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
                 COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/PluginStatus.qml" "${out}/PluginStatus.qml")
             install(CODE "message(FATAL_ERROR \\"cmake install must never run\\")")
             '''))
+        for name in RAIN_SOURCES:
+            (self.repo / "native/rain" / name).write_text(f"// required native source: {name}\n")
+        # Only the patched CMake project validates copied inputs and emits this artifact.
+        host_checks = ["set(rain_marker \"\")"]
+        for name in RAIN_SOURCES:
+            host_checks += [f'file(READ "${{CMAKE_SOURCE_DIR}}/src/rain/{name}" rain_source)',
+                            f'if(NOT rain_source STREQUAL "// required native source: {name}\\n")',
+                            f'    message(FATAL_ERROR "incorrect native source: {name}")',
+                            'endif()', 'string(APPEND rain_marker "${rain_source}")']
+        host_checks += ['file(WRITE "${CMAKE_SOURCE_DIR}/package/rain-extension.txt" "${rain_marker}")']
+        (self.repo / "assets/wallpapers/shaders/interactive-rain-host.patch").write_text(
+            "--- a/CMakeLists.txt\n+++ b/CMakeLists.txt\n"
+            f"@@ -1,4 +1,{4 + len(host_checks)} @@\n"
+            " cmake_minimum_required(VERSION 3.22)\n project(shader_fixture LANGUAGES C)\n" +
+            "".join("+" + line + "\n" for line in host_checks) +
+            " add_library(shaderwallpaperplugin MODULE plugin.c)\n"
+            ' set(out "${CMAKE_SOURCE_DIR}/package/contents/ui/shaderwallpaper")\n')
         patch = self.repo / "assets/wallpapers/shaders/heartfelt-no-heart.patch"
         patch.write_text("--- a/Heartfelt_No_Heart.frag\n+++ b/Heartfelt_No_Heart.frag\n"
                          "@@ -1,5 +1,5 @@\n " + HEADER + " " + LICENSE + " \n"
-                         "-#define HAS_HEART\n+// Arasaka adaptation; source: upstream Heartfelt.frag\n"
+                          "-#define HAS_HEART\n+// Arasaka adaptation; source: upstream Heartfelt.frag\n"
                          " void mainImage() {}\n")
+        self.noheart_code = HEADER + LICENSE + "\n// Arasaka adaptation; source: upstream Heartfelt.frag\nvoid mainImage() {}\n"
+        self.rain_code = self.noheart_code.replace("void mainImage() {}\n",
+            "// @channels tex0,none,none,none\n// @arasaka-effect rain-v1\n"
+            "uniform sampler2D iRainField;\nvoid mainImage() {}\n")
+        self.rain_patch = self.repo / "assets/wallpapers/shaders/interactive-rain.patch"
+        self.rain_patch.write_text("--- a/Interactive_Rain.frag\n+++ b/Interactive_Rain.frag\n"
+            "@@ -4,2 +4,5 @@\n // Arasaka adaptation; source: upstream Heartfelt.frag\n"
+            "+// @channels tex0,none,none,none\n+// @arasaka-effect rain-v1\n"
+            "+uniform sampler2D iRainField;\n void mainImage() {}\n")
         archive = self.base / "shader.tar.gz"
         with tarfile.open(archive, "w:gz") as tar:
             tar.add(source, arcname="kde-shader-wallpaper-pinned")
@@ -279,7 +438,8 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
                         PATH=f"{self.tools}:{os.environ['PATH']}",
                         REAL_CMAKE=shutil.which("cmake"), TOOL_LOG=str(self.base / "tools.jsonl"),
                         DESKTOP_STATE=str(self.base / "desktops.json"), PYTHONDONTWRITEBYTECODE="1")
-        for name in ("FAIL_BUILD", "OMIT_PLUGIN", "BAD_DBUS", "REJECT_SETTING", "CHECK_PRIVACY", "ARASAKA_SHADER_BUILD_JOBS"):
+        for name in ("FAIL_BUILD", "OMIT_PLUGIN", "BAD_DBUS", "REJECT_SETTING", "CHECK_PRIVACY",
+                     "REJECT_MOUSE_ENABLE", "REJECT_PLUGIN_COMMIT", "FAIL_ACTIVATE", "ARASAKA_SHADER_BUILD_JOBS"):
             self.env.pop(name, None)
         self.desktops = [
             {"id": 12, "screen": 0, "wallpaperPlugin": "org.kde.image", "config": {"targetFps": 60}},
@@ -310,6 +470,8 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         self.tool("qdbus6", f'''
             assert sys.argv[1:4] == ['org.kde.plasmashell', '/PlasmaShell', 'org.kde.PlasmaShell.evaluateScript']
             assert len(sys.argv) == 5
+            if os.environ.get('FAIL_ACTIVATE') and 'var shaderPhase = "activate";' in sys.argv[4]:
+                sys.exit('fixture interruption after prepare')
             if os.environ.get('BAD_DBUS'):
                 print(os.environ['BAD_DBUS'])
             else:
@@ -336,7 +498,7 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         self.package.mkdir(parents=True)
         (self.package / "previous.txt").write_text("previous package\n")
         (self.artwork / "shaders").mkdir(parents=True)
-        for name in ("mikoshi-16x9.png", "mikoshi-16x10.png", f"shaders/{SHADER}"):
+        for name in ("mikoshi-16x9.png", "mikoshi-16x10.png", f"shaders/{SHADER}", f"shaders/{RAIN}"):
             (self.artwork / name).write_text(f"previous {name}\n")
         (self.artwork / "unrelated.txt").write_text("keep\n")
         (self.config / "plasma-org.kde.plasma.desktop-appletsrc").write_text("previous plasma config\n")
@@ -347,6 +509,8 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
     def assert_previous_unchanged(self):
         self.assertEqual((self.package / "previous.txt").read_text(), "previous package\n")
         self.assertEqual((self.artwork / "mikoshi-16x9.png").read_text(), "previous mikoshi-16x9.png\n")
+        for name in (SHADER, RAIN):
+            self.assertEqual((self.artwork / "shaders" / name).read_text(), f"previous shaders/{name}\n")
         self.assertEqual((self.config / "plasma-org.kde.plasma.desktop-appletsrc").read_text(), "previous plasma config\n")
         self.assertFalse(any(call[0] == "qdbus6" for call in self.calls()))
 
@@ -361,6 +525,12 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         self.assertTrue(adapted.startswith(HEADER + LICENSE))
         self.assertNotIn("#define HAS_HEART", adapted)
         self.assertIn("Arasaka adaptation", adapted)
+        self.assertEqual(adapted, self.noheart_code)
+        self.assertTrue((self.package / "rain-extension.txt").is_file(), "host integration was not configured")
+        self.assertTrue((self.artwork / "shaders" / RAIN).is_file(), "Interactive Rain was not installed")
+        self.assertEqual((self.artwork / "shaders" / RAIN).read_text(), self.rain_code)
+        self.assertEqual((self.package / "rain-extension.txt").read_text(),
+                         "".join(f"// required native source: {name}\n" for name in RAIN_SOURCES))
         for name, size in (("mikoshi-16x9.png", (1920, 1080)), ("mikoshi-16x10.png", (1600, 1000))):
             self.assertEqual(struct.unpack(">II", (self.artwork / name).read_bytes()[16:24]), size)
         self.assertEqual({call[0] for call in self.calls()}, {"cmake"})
@@ -379,10 +549,10 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         desktops = json.loads(Path(self.env["DESKTOP_STATE"]).read_text())
         expected = {
-            "selectedShaderPath": (self.artwork / "shaders" / SHADER).as_uri(),
+            "selectedShaderPath": (self.artwork / "shaders" / RAIN).as_uri(),
             "selectedShaderCode": "", "running": True, "shaderSpeed": 0.75,
             "targetFps": 30, "resolutionScale": 1, "pauseMode": 0, "checkActiveScreen": True,
-            "mouseEnabled": False, "audioEnabled": False, "windowsEnabled": False,
+            "mouseEnabled": True, "audioEnabled": False, "windowsEnabled": False,
             "iChannel0Enabled": True, "imageChannel0": 0, "playlistEnabled": False,
             "commonCode": "", "useBufferA": False, "useBufferB": False,
             "useBufferC": False, "useBufferD": False,
@@ -400,13 +570,39 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         for relative, text in (("package/previous.txt", "previous package\n"),
                                ("artwork/mikoshi-16x9.png", "previous mikoshi-16x9.png\n"),
                                (f"artwork/shaders/{SHADER}", f"previous shaders/{SHADER}\n"),
+                               (f"artwork/shaders/{RAIN}", f"previous shaders/{RAIN}\n"),
                                ("plasma-org.kde.plasma.desktop-appletsrc", "previous plasma config\n"),
                                ("runtime/layout.js", "previous runtime layout\n")):
             self.assertEqual((backup / relative).read_text(), text)
         self.assertEqual((self.artwork / "unrelated.txt").read_text(), "keep\n")
         self.assertEqual((self.home / ".local/libexec/arasaka-kde/layout.js").read_text(), "previous runtime layout\n")
         self.assertEqual([call[1:] for call in self.calls() if call[0] == "kscreen-doctor"], [["--json"]])
-        self.assertEqual(sum(call[0] == "qdbus6" for call in self.calls()), 1)
+        calls = [call for call in self.calls() if call[0] == "qdbus6"]
+        self.assertEqual(len(calls), 2)
+        self.assertIn('var shaderPhase = "prepare";', calls[0][-1])
+        self.assertIn('var shaderPhase = "activate";', calls[1][-1])
+
+    def test_activation_interruption_leaves_committed_pending_rain_with_mouse_off(self):
+        result = self.run_installer(FAIL_ACTIVATE="1", CHECK_PRIVACY="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("interruption after prepare", result.stderr)
+        for desktop in json.loads(Path(self.env["DESKTOP_STATE"]).read_text()):
+            self.assertEqual(desktop["wallpaperPlugin"], PLUGIN)
+            self.assertIs(desktop["config"]["mouseEnabled"], False)
+            self.assertIs(desktop["config"][PENDING], True)
+        result = self.run_installer(CHECK_PRIVACY="1")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        for desktop in json.loads(Path(self.env["DESKTOP_STATE"]).read_text()):
+            self.assertIs(desktop["config"]["mouseEnabled"], True)
+            self.assertIs(desktop["config"][PENDING], False)
+
+    def test_installer_does_not_trust_cached_plugin_report_when_commit_is_ignored(self):
+        result = self.run_installer(REJECT_PLUGIN_COMMIT="1", CHECK_PRIVACY="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("plugin mismatch", result.stderr)
+        for desktop in json.loads(Path(self.env["DESKTOP_STATE"]).read_text()):
+            self.assertIs(desktop["config"]["mouseEnabled"], False)
+            self.assertIs(desktop["config"][PENDING], True)
 
     def test_failed_build_preserves_previous_package_artwork_and_config(self):
         self.seed_previous_install()
@@ -434,6 +630,7 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
     def test_symlinked_package_artwork_config_and_runtime_sources_are_refused(self):
         self.seed_previous_install()
         for target in (self.package, self.artwork / "mikoshi-16x9.png",
+                       self.artwork / "shaders" / RAIN,
                        self.config / "plasma-org.kde.plasma.desktop-appletsrc",
                        self.home / ".local/libexec/arasaka-kde/layout.js"):
             with self.subTest(target=target):
@@ -494,7 +691,7 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         desktops = []
         for desktop, image in zip(self.desktops, ("mikoshi-16x10.png", "mikoshi-16x9.png")):
             desktops.append(dict(desktop, wallpaperPlugin=PLUGIN, config={
-                "selectedShaderPath": (self.artwork / "shaders" / SHADER).as_uri(),
+                "selectedShaderPath": (self.artwork / "shaders" / RAIN).as_uri(),
                 "iChannel0": (self.artwork / image).as_uri(), "targetFps": 30, "audioEnabled": True,
             }))
         report = {"status": "ok", "primaryScreen": 1, "desktops": desktops}
@@ -542,19 +739,141 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         self.assert_previous_unchanged()
         self.assertFalse(self.backups.exists())
 
+    def test_missing_rain_inputs_fail_preflight_in_user_and_stage_modes(self):
+        self.seed_previous_install()
+        inputs = [self.repo / "native/rain" / name for name in RAIN_SOURCES]
+        inputs += [self.rain_patch, self.rain_patch.with_name("interactive-rain-host.patch")]
+        destination = self.base / "system-stage"
+        for path in inputs:
+            contents = path.read_bytes()
+            path.unlink()
+            try:
+                for args in (("--install-only",), ("--stage-only", str(destination))):
+                    with self.subTest(path=path.name, args=args):
+                        result = self.run_installer(*args)
+                        self.assertNotEqual(result.returncode, 0, result.stdout)
+                        self.assertIn(path.name, result.stderr)
+                        self.assertEqual(self.calls(), [])
+                        self.assert_previous_unchanged()
+                        self.assertFalse(self.backups.exists())
+                        self.assertFalse(destination.exists())
+            finally:
+                path.write_bytes(contents)
+
+    def test_symlinked_rain_inputs_and_source_parent_are_rejected_in_both_modes(self):
+        self.seed_previous_install()
+        inputs = [self.repo / "native/rain" / name for name in RAIN_SOURCES]
+        inputs += [self.repo / "native/rain", self.rain_patch,
+                   self.rain_patch.with_name("interactive-rain-host.patch")]
+        for path in inputs:
+            original = path.with_name(path.name + ".real")
+            path.rename(original)
+            path.symlink_to(original, target_is_directory=original.is_dir())
+            try:
+                for args in (("--install-only",), ("--stage-only", str(self.base / "system-stage"))):
+                    with self.subTest(path=path.name, args=args):
+                        result = self.run_installer(*args)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("symlink", result.stderr.lower())
+                        self.assertEqual(self.calls(), [])
+                        self.assert_previous_unchanged()
+            finally:
+                path.unlink()
+                original.rename(path)
+
+    def test_failed_host_patch_prevents_configure_build_and_replacement(self):
+        self.seed_previous_install()
+        patch = self.rain_patch.with_name("interactive-rain-host.patch")
+        # Only a fuzzy application could ignore this mismatched context line.
+        patch.write_text(patch.read_text().replace("cmake_minimum_required(VERSION 3.22)",
+                                                  "cmake_minimum_required(VERSION 9.99)"))
+        result = self.run_installer("--install-only")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("patch", result.stderr.lower())
+        self.assertEqual(self.calls(), [])
+        self.assert_previous_unchanged()
+        self.assertFalse(self.backups.exists())
+
+    def test_failed_rain_shader_patch_preserves_previous_assets_and_config(self):
+        self.seed_previous_install()
+        self.rain_patch.write_text(self.rain_patch.read_text().replace(
+            "// Arasaka adaptation; source: upstream Heartfelt.frag", "// wrong adaptation step"))
+        result = self.run_installer("--install-only")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("patch", result.stderr.lower())
+        self.assert_previous_unchanged()
+        self.assertFalse(self.backups.exists())
+
+    def test_rain_shader_validation_rejects_missing_interface_and_lost_license(self):
+        self.seed_previous_install()
+        original = self.rain_patch.read_text()
+        for before, after in (("// @arasaka-effect rain-v1", "// @arasaka-effect rain-v1 extra"),
+                              ("uniform sampler2D iRainField;", "// uniform sampler2D iRainField;"),
+                              ("void mainImage() {}", "void missingEntry() {}"),
+                              (LICENSE.rstrip(), "// lost license")):
+            with self.subTest(before=before):
+                # Generate a valid patch with the wrong output, so validation must catch it.
+                bad_code = self.rain_code.replace(before, after)
+                self.rain_patch.write_text("".join(difflib.unified_diff(
+                    self.noheart_code.splitlines(keepends=True), bad_code.splitlines(keepends=True),
+                    fromfile="a/Interactive_Rain.frag", tofile="b/Interactive_Rain.frag")))
+                result = self.run_installer("--install-only")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("shader", result.stderr.lower())
+                self.assert_previous_unchanged()
+                self.assertFalse(self.backups.exists())
+        self.rain_patch.write_text(original)
+
+    def test_stage_only_exports_extended_plugin_and_both_shaders_with_system_urls(self):
+        self.seed_previous_install()
+        destination = self.base / "system-stage"
+        # Only the six explicit files belong in the build inputs.
+        (self.repo / "native/rain/ignored.cpp").symlink_to(self.base / "missing.cpp")
+        result = self.run_installer("--stage-only", str(destination))
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        package = destination / "usr/share/plasma/wallpapers" / PLUGIN
+        artwork = destination / "usr/share/wallpapers/Arasaka"
+        self.assertTrue((package / "contents/ui/shaderwallpaper/libshaderwallpaperplugin.so").read_bytes().startswith(b"\x7fELF"))
+        self.assertTrue((package / "rain-extension.txt").is_file(), "host integration was not staged")
+        self.assertEqual((package / "rain-extension.txt").read_text(),
+                         "".join(f"// required native source: {name}\n" for name in RAIN_SOURCES))
+        self.assertEqual((artwork / "shaders" / SHADER).read_text(), self.noheart_code)
+        self.assertEqual((artwork / "shaders" / RAIN).read_text(), self.rain_code)
+        index = json.loads((package / "contents/ui/shader_index.json").read_text())
+        entries = {entry["id"]: entry for entry in index["shaders"]}
+        self.assertEqual(len(entries), 5)
+        self.assertEqual(entries["arasaka-interactive-rain"]["shaderPath"],
+                         "file:///usr/share/wallpapers/Arasaka/shaders/Interactive_Rain.frag")
+        self.assertEqual(entries["arasaka-heartfelt-no-heart"]["shaderPath"],
+                         "file:///usr/share/wallpapers/Arasaka/shaders/Heartfelt_No_Heart.frag")
+        self.assertNotIn(str(self.home), json.dumps(index))
+        self.assertNotIn(str(destination), json.dumps(index))
+        for path in destination.rglob("*"):
+            self.assertFalse(path.is_symlink())
+            self.assertEqual(path.stat().st_mode & 0o777, 0o755 if path.is_dir() else 0o644)
+        self.assertEqual({call[0] for call in self.calls()}, {"cmake"})
+        configure = next(call for call in self.calls() if "-S" in call)
+        self.assertIn("-DBUILD_TESTING=OFF", configure)
+        self.assertIn("-DCMAKE_SKIP_RPATH=ON", configure)
+        self.assert_previous_unchanged()
+        self.assertFalse(self.backups.exists())
+        self.assertEqual(json.loads(Path(self.env["DESKTOP_STATE"]).read_text()), self.desktops)
+
     def test_gallery_adds_credited_imports_and_external_no_heart_without_losing_stock_entries(self):
         result = self.run_installer("--install-only")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         index = json.loads((self.package / "contents/ui/shader_index.json").read_text())
         self.assertEqual(index["categories"], ["Fixture"])
         self.assertIn(self.stock_entry, index["shaders"])
-        self.assertEqual(len(index["shaders"]), 4)
+        self.assertEqual(len(index["shaders"]), 5)
         entries = {entry["name"]: entry for entry in index["shaders"]}
         for name, source_id, author, license_name, path, textures in (
                 ("Tokyo", "Xtf3zn", "Reinder Nijhoff", "CC BY-NC-SA 4.0", "Shaders/Tokyo.frag", False),
                 ("Dusti [237 Chars]", "tcXXDB", "HellMood", "CC BY-NC-SA 3.0", "Shaders/Dusti.frag", False),
                 ("Heartfelt No Heart", "ltffzl", "Martijn Steinrucken", "CC BY-NC-SA 3.0",
-                 (self.artwork / "shaders" / SHADER).as_uri(), True)):
+                 (self.artwork / "shaders" / SHADER).as_uri(), True),
+                ("Interactive Rain", "ltffzl", "Martijn Steinrucken", "CC BY-NC-SA 3.0",
+                 (self.artwork / "shaders" / RAIN).as_uri(), True)):
             entry = entries[name]
             self.assertEqual(entry["shaderPath"], path)
             self.assertEqual(entry["source"], "shadertoy")
@@ -564,7 +883,8 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
             self.assertEqual(entry["needsTextures"], textures)
             self.assertIs(entry["needsAudio"], False)
             self.assertIs(entry["hasBuffers"], False)
-        self.assertEqual(len({entry["id"] for entry in index["shaders"]}), 4)
+        self.assertEqual(entries["Interactive Rain"]["id"], "arasaka-interactive-rain")
+        self.assertEqual(len({entry["id"] for entry in index["shaders"]}), 5)
 
     def test_import_checksum_failure_preserves_previous_installation(self):
         self.seed_previous_install()
@@ -587,7 +907,7 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         self.assertIn("Dusti", result.stderr)
         self.assert_previous_unchanged()
 
-    def test_one_existing_desktop_can_activate_no_heart(self):
+    def test_one_existing_desktop_can_activate_interactive_rain(self):
         self.tool("kscreen-doctor", '''
             assert sys.argv[1:] == ['--json'], 'display reconfiguration is forbidden'
             print(json.dumps({'outputs': [
@@ -599,7 +919,7 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         desktops = json.loads(Path(self.env["DESKTOP_STATE"]).read_text())
         self.assertEqual(len(desktops), 1)
-        self.assertEqual(desktops[0]["config"]["selectedShaderPath"], (self.artwork / "shaders" / SHADER).as_uri())
+        self.assertEqual(desktops[0]["config"]["selectedShaderPath"], (self.artwork / "shaders" / RAIN).as_uri())
 
     def test_missing_enabled_secondary_desktop_fails_without_config_writes(self):
         initial = [self.desktops[1]]
@@ -609,7 +929,7 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         self.assertIn("eDP-1", result.stderr)
         self.assertEqual(json.loads(Path(self.env["DESKTOP_STATE"]).read_text()), initial)
 
-    def test_three_existing_desktops_can_activate_no_heart(self):
+    def test_three_existing_desktops_can_activate_interactive_rain(self):
         third = {"id": 42, "screen": 2, "wallpaperPlugin": "org.kde.image", "config": {}}
         Path(self.env["DESKTOP_STATE"]).write_text(json.dumps([*self.desktops, third]))
         result = self.run_installer()
@@ -617,7 +937,7 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         desktops = json.loads(Path(self.env["DESKTOP_STATE"]).read_text())
         self.assertEqual(len(desktops), 3)
         for desktop in desktops:
-            self.assertEqual(desktop["config"]["selectedShaderPath"], (self.artwork / "shaders" / SHADER).as_uri())
+            self.assertEqual(desktop["config"]["selectedShaderPath"], (self.artwork / "shaders" / RAIN).as_uri())
 
     def test_invalid_existing_screen_is_rejected_without_config_writes(self):
         self.desktops[0]["screen"] = "invalid"
@@ -633,7 +953,7 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         desktops = json.loads(Path(self.env["DESKTOP_STATE"]).read_text())
         self.assertEqual(desktops[2], parked)
-        self.assertEqual(desktops[1]["config"]["selectedShaderPath"], (self.artwork / "shaders" / SHADER).as_uri())
+        self.assertEqual(desktops[1]["config"]["selectedShaderPath"], (self.artwork / "shaders" / RAIN).as_uri())
 
     def test_only_parked_desktops_is_not_success(self):
         for desktop in self.desktops:
@@ -678,7 +998,7 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
                 self.assertEqual((ui / relative).read_bytes(), contents)
             index = json.loads((ui / "shader_index.json").read_text())
             self.assertEqual(index["shaders"].count(saved_entry), 1)
-            self.assertEqual(len(index["shaders"]), 5)
+            self.assertEqual(len(index["shaders"]), 6)
             self.assertIn("Personal", index["categories"])
             self.assertEqual(config.read_text(), config_text)
             self.assertEqual(json.loads(Path(self.env["DESKTOP_STATE"]).read_text()), self.desktops)
@@ -694,7 +1014,8 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         for name in ("Tokyo", "Dusti"):
             (ui / "Shaders" / f"{name}.frag").write_text(f"stale {name} shader\n")
         paths = [(ui / "Shaders/Heartfelt.frag").as_uri(), (ui / "Shaders/Tokyo.frag").as_uri(),
-                 "Shaders/Dusti.frag", str(self.artwork / "shaders" / SHADER)]
+                 "Shaders/Dusti.frag", str(self.artwork / "shaders" / SHADER),
+                 str(self.artwork / "shaders" / RAIN)]
         entries = [dict(self.stock_entry, id=f"saved-{number}", shaderPath=path, favorite=True,
                         description="stale metadata", thumbnailPath=f"file:///saved-thumb-{number}.png")
                    for number, path in enumerate(paths)]
@@ -702,9 +1023,9 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         result = self.run_installer("--install-only")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         index = json.loads((ui / "shader_index.json").read_text())
-        self.assertEqual(len(index["shaders"]), 4)
+        self.assertEqual(len(index["shaders"]), 5)
         by_name = {entry["name"]: entry for entry in index["shaders"]}
-        for number, name in enumerate(("Heartfelt", "Tokyo", "Dusti [237 Chars]", "Heartfelt No Heart")):
+        for number, name in enumerate(("Heartfelt", "Tokyo", "Dusti [237 Chars]", "Heartfelt No Heart", "Interactive Rain")):
             self.assertTrue(by_name[name]["favorite"], name)
             self.assertEqual(by_name[name]["id"], f"saved-{number}")
             self.assertEqual(by_name[name]["thumbnailPath"], f"file:///saved-thumb-{number}.png")
@@ -712,6 +1033,14 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         self.assertTrue((ui / "Shaders/Tokyo.frag").read_text().endswith(self.tokyo_code))
         self.assertTrue((ui / "Shaders/Dusti.frag").read_text().endswith(self.dusti_adapted))
         self.assertTrue((self.artwork / "shaders" / SHADER).read_text().startswith(HEADER + LICENSE))
+        self.assertEqual((self.artwork / "shaders" / RAIN).read_text(), self.rain_code)
+        # Reinstall the just-installed gallery, not only a hand-authored legacy index.
+        (self.artwork / "shaders" / RAIN).write_text("obsolete managed rain\n")
+        result = self.run_installer("--install-only")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(json.loads((ui / "shader_index.json").read_text()), index)
+        self.assertEqual((self.artwork / "shaders" / RAIN).read_text(), self.rain_code)
+        self.assertEqual((self.artwork / "shaders" / SHADER).read_text(), self.noheart_code)
 
     def test_conflicting_bundled_shader_is_refused_without_losing_user_edits(self):
         self.seed_previous_install()

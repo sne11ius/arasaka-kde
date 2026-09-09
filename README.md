@@ -186,12 +186,26 @@ See `TODO.md` for the completion record and remaining clock-appearance check.
 
 ## Lock Screen
 
-The Plasma lock screen is configured independently from PLM to use **Heartfelt
-No Heart without a clock/date**. It uses the existing user-local shader plugin and
-16:9 Mikoshi texture at 30 FPS, 75% speed and full resolution. Window-based pausing
-is disabled for this surface (`pauseMode=3`); mouse, audio, window-reactive inputs,
-playlists, source watching and buffer passes are off. Desktop settings and gallery
-contents are not changed.
+The Plasma lock screen is configured independently from PLM to use **Interactive
+Rain with passive mouse hover and no clock/date**. It uses the same current rounded,
+merging droplets as the desktop, the user-local shader plugin and 16:9 Mikoshi
+texture at 30 FPS, 75% speed and full resolution. Window-based pausing is disabled
+for this surface (`pauseMode=3`). Mouse permission is enabled; audio, window-reactive
+inputs, playlists, source watching and buffer passes remain off. Desktop settings
+and gallery contents are not changed.
+
+Only committed native Rain may observe button-free pointer motion inside the
+locker's own wallpaper window. The observer never consumes buttons or keyboard
+events, grabs input, changes focus, reads password text or polls the global cursor.
+The desktop behind a locked session still rejects rain input. Ordinary lock-screen
+shaders and all PLM/login shaders retain their input restrictions; global cursor
+tracking and the stock MouseArea stay disabled on both greeter roles.
+Mouse permission also stays off before attachment and classification. The wallpaper
+publishes the attached window and roles together only for recognized desktop, lock
+or login sources; missing/unknown sources fail closed. Detach, reparent and source
+changes revoke that permission before reclassification, cancelling pending input
+without a delay or timer. The settings mini-preview uses its own input-disabled
+renderer and does not participate in this host handoff.
 
 To apply only this appearance, run as the desktop user without sudo:
 
@@ -201,7 +215,11 @@ To apply only this appearance, run as the desktop user without sudo:
 
 The command requires the already-built user-local shader package and artwork,
 `kreadconfig6`, `kwriteconfig6`, Python 3 and `ldd`. It inspects the installed native
-module, dependencies and configuration schemas before writing. It stages and reads
+module, dependencies and configuration schemas before writing. It requires the
+exact native-rain shader marker and generated native metadata declaring the writable
+boolean `ShaderEngine.rainLockScreenHost`; an old renderer is rejected before any
+configuration writes. Install the updated package before running this command.
+It stages and reads
 back the proposed appearance, then uses KConfig's locking/merge writer to update
 only the managed keys in `kscreenlockerrc`, selecting the wallpaper plugin last.
 It does not rebuild or replace assets, alter authentication/lock timing, change
@@ -225,10 +243,14 @@ For a shader-only fallback without restoring potentially stale lock-policy value
 kwriteconfig6 --file kscreenlockerrc --group Greeter --key WallpaperPlugin org.kde.image
 ```
 
-Configuration readback succeeded, including unchanged lock-policy values;
-desktop/KWin/gallery/PLM file hashes also remained unchanged. The next normal
-lock-screen start loads this configuration. Rendering and clock absence still
-need actual observation; no tests, synthetic previews or forced lock were run.
+The next normal lock-screen start loads this configuration and the new native
+module. A guarded host binding also permits updated shared QML to load in an
+already-running desktop that still has the preceding native module cached; no
+desktop restart is required. The host role is not a persisted configuration key.
+Native input, real host QML and private KConfig fixture tests cover this behavior,
+not authentication. Live lock-screen rendering, hover delivery and clock absence
+still need observation at a normal user-initiated lock; no lock, authentication
+preview or live configuration change is part of these tests.
 The native renderer requires OpenGL; this command does not override global Qt
 settings or disable the locker's software-rendering crash recovery.
 
@@ -294,8 +316,9 @@ themes, change window effects or application settings, or generate wallpapers.
 Layout and display-priority reconciliation still run, but wallpaper and desktop
 icon settings are preserved. Full-theme deployment and its automatic display
 watcher opt into `--hide-desktop-icons --ensure-shader-wallpaper`: icons are
-hidden, and active desktops not yet using the shader plugin receive Heartfelt
-No Heart defaults. Existing shader selections and settings are preserved.
+hidden, and active desktops not yet using the shader plugin receive Interactive
+Rain defaults with hover enabled. Existing shader selections and settings are
+preserved.
 
 Before replacement, the command prints a unique backup path under
 `${XDG_STATE_HOME:-$HOME/.local/state}/arasaka-kde/backups/launcher-*`.
@@ -475,22 +498,34 @@ selects TV Glitch again. Window and popup durations are set in
 
 ## Shader Wallpaper
 
-The wallpaper uses **Heartfelt without the heart sequence**, over the existing
-Arasaka/Mikoshi artwork, through
+The managed desktop default is **Interactive Rain**: native simulated droplets
+fall, merge, refract the Arasaka/Mikoshi artwork, and leave trails through fog.
+Move the pointer over exposed desktop space to influence nearby drops with passive
+hover; no clicking or dragging is needed, and desktop clicks remain available.
+It adapts BigWings' Heartfelt through
 [kde-shader-wallpaper](https://github.com/y4my4my4m/kde-shader-wallpaper).
+**Heartfelt No Heart remains a separate gallery effect and the unchanged PLM/login
+selection.** The separately scoped `apply-lockscreen` command selects Interactive
+Rain with passive hover for the lock screen; installing desktop assets alone does
+not change its saved appearance or any authentication settings.
+
 Both wallpaper aspect ratios use illuminated crimson/coral architecture, cyan
 light channels, and small amber accents. Broad colored midtones extend through
 the center and screen edges so the 8 px tiling gaps remain distinct from dark
 windows, even under fog. The emblem, grid, and scanlines remain; application and
 window palettes are unchanged.
-All existing desktops use 30 FPS, full resolution, 75% shader playback speed, and
-pause for maximized/fullscreen windows on their respective screen. Mouse and
-audio capture, window-reactive shader input, playlists, and buffer passes are
-disabled. Only texture channel 0 is enabled.
+Managed desktop activation targets 30 FPS, full resolution, 75% shader playback
+speed, and pauses for maximized/fullscreen windows on each respective screen.
+Mouse input is explicitly enabled for hover; audio capture, window-reactive shader
+input, playlists, and generic A-D buffer passes remain disabled. Only texture
+channel 0 is enabled. The native rain field is independent of those buffer passes.
+Selecting Interactive Rain from the gallery does not enable mouse input: with
+mouse disabled, physical rainfall continues without pointer forces until you enable
+the existing mouse setting. No new settings UI is required.
 
 This is the only managed desktop wallpaper implementation. `apply-live` calls
 `apply-shader-wallpaper` once to build, back up, install, and activate the same
-Heartfelt No Heart defaults, including rendering the PNGs used by the shader and
+Interactive Rain defaults, including rendering the PNGs used by the shader and
 static fallback. A shader installation/activation failure stops deployment
 rather than selecting another wallpaper.
 
@@ -500,8 +535,17 @@ newly created or reconnected desktops, while preserving existing Tokyo, Dusti,
 Heartfelt, or custom shader settings. It checks coverage of every enabled output
 before recording success and retries if Plasma has not created a desktop yet.
 This lightweight step uses installed assets, without rebuilding the plugin or
-restarting Plasma. Full-theme or standalone shader reapplication still selects
-Heartfelt No Heart again without discarding the gallery.
+restarting Plasma. It also resumes interrupted managed rain initialization, but
+only while that pending target's managed settings are unchanged. Wallpaper setup
+requires the native plugin, both `Heartfelt_No_Heart.frag` and
+`Interactive_Rain.frag`, and the artwork. If any asset is unavailable, the runtime
+warns and defers only wallpaper setup: launcher layout and icon reconciliation
+continue without changing any wallpaper selection or input permission. This keeps
+launcher-only updates and an interrupted/failed full-theme build safe on older
+installations. Every watcher run rechecks readiness, even with unchanged topology;
+once the assets are installed, the normal two-phase wallpaper initialization resumes.
+Full-theme or standalone shader reapplication still selects
+Interactive Rain again with hover enabled, without discarding the gallery.
 
 ```sh
 ./bin/apply-shader-wallpaper --install-only
@@ -512,12 +556,13 @@ For independent system packaging, `./bin/apply-shader-wallpaper --stage-only DES
 exports to an absolute empty/nonexistent directory with final `/usr/share` URLs.
 It is mutually exclusive with `--install-only`, rejects symlinked output paths,
 and skips user-gallery merging, home deployment/backups, and all session calls.
-`build-plm` uses this mode; neither existing desktop mode changes its behavior.
+It includes the native rain extension and both external effects. `build-plm` uses
+this mode without changing PLM's existing Heartfelt No Heart selection.
 
 Run as the desktop user, without `sudo`. The first command builds, validates,
 backs up, and installs artifacts without any live session calls. The default
 command does the same work and then applies only `plasma/shader-wallpaper.js`
-through Plasma's D-Bus scripting API. It requires a nonempty set of existing
+through two separate evaluations of Plasma's D-Bus scripting API. It requires a nonempty set of existing
 desktops with valid screen IDs, including the primary screen; one or more
 desktops are supported. Parked containments with screen `-1` are left untouched.
 It maps the external-preferred primary connector using
@@ -542,17 +587,38 @@ embedded under `contents/ui/shaderwallpaper/`, is deployed to
 `${XDG_DATA_HOME:-$HOME/.local/share}/plasma/wallpapers/online.knowmad.shaderwallpaper`.
 Its relative QML import needs no system or separate user QML-module installation.
 
-The tracked inputs are `assets/wallpapers/mikoshi-16x9.svg`,
-`assets/wallpapers/mikoshi-16x10.svg`, and
-`assets/wallpapers/shaders/heartfelt-no-heart.patch`. Installation renders
+Before CMake configuration, the installer applies
+`assets/wallpapers/shaders/interactive-rain-host.patch` at the extracted source
+root and copies the six explicit `native/rain/{dropletsimulation,rainfieldrenderer,raininput}.{h,cpp}`
+files into `src/rain/`. Missing or symlinked required inputs are rejected during
+preflight, including in stage-only mode. The extension is compiled into the existing
+GPL native module, not installed as a second plugin.
+
+The artwork inputs are `assets/wallpapers/mikoshi-16x9.svg` and
+`assets/wallpapers/mikoshi-16x10.svg`. Installation renders
 1920x1080 and 1600x1000 PNGs into `$XDG_DATA_HOME/wallpapers/Arasaka/`, using the
 same data-home fallback above. It copies upstream `Heartfelt.frag` to a separate
-`shaders/Heartfelt_No_Heart.frag` there and applies the patch with `-p1`, preserving
-the original author/license header. The packaged upstream shader is untouched.
+`shaders/Heartfelt_No_Heart.frag` there and applies `heartfelt-no-heart.patch`.
+It then copies that adapted shader to `shaders/Interactive_Rain.frag` and applies
+`interactive-rain.patch` only to the copy. All patches use
+`--batch --forward --fuzz=0 -p1`; generated rain must retain the upstream license
+header, entry point, exact `// @arasaka-effect rain-v1` marker and `iRainField`
+sampler. The packaged original and the existing no-heart adaptation are unchanged
+by the new patch.
+
 Background fog uses cubic B-spline filtering across adjacent mip levels, with a
 one-level bias toward finer detail. This reduces blur modestly and avoids the
 visible mip-grid corners produced by the original single linear sample as fog
-increases. Rain, trails, and refraction retain their original timing. Lightning
+increases. Heartfelt No Heart retains its procedural rain timing; Interactive Rain
+uses native droplet physics, an optical history field, and hover input instead.
+Its 1024-drop identity cap limits particles, not incoming water: bounded
+active-time condensation grows existing caps fairly, allowing pinned beads to
+start sliding naturally. Mostly small births and slow accretion retain several
+hundred varied beads alongside fewer large flowing drops. Birth radii and adhesion
+scale together with viewport height; pause freezes growth as well as motion.
+Moving caps elongate along velocity with area-preserving optics; stationary caps
+remain round. These physical drops do not reproduce Heartfelt's procedural shapes exactly.
+Both adaptations retain the artwork filtering, fog and postprocessing. Lightning
 keeps one in four original burst windows at 25% strength, without changing flash
 timing or the background's normal brightness. This gives roughly one burst every
 67 seconds of active playback at 75% speed: half the previous frequency and
@@ -568,7 +634,7 @@ shader; the artwork check alone does not model its animated lighting.
 
 The gallery also offers **Tokyo** (`Xtf3zn`, Reinder Nijhoff) and **Dusti [237
 Chars]** (`tcXXDB`, HellMood). These are selectable alternatives, not changes to
-the default no-heart selection. The installer fetches their immutable raw
+the default Interactive Rain selection. The installer fetches their immutable raw
 resources through `fetch-components`, strips Tokyo's UTF-8 BOM, and extracts
 Dusti's single Image pass from the archived API JSON. Both are installed under
 the package's `contents/ui/Shaders/` as `Tokyo.frag` and `Dusti.frag`. Tokyo's
@@ -578,8 +644,9 @@ the alpha-only adapter described below. Added attribution and
 from carrying over when selected. Neither shader requires textures or buffers.
 
 The staged `shader_index.json` retains its upstream entries and gains credited
-entries for Tokyo, Dusti, and **Heartfelt No Heart**. The no-heart entry points to
-the external custom shader above and declares that it needs a texture, not audio.
+entries for Tokyo, Dusti, **Heartfelt No Heart**, and **Interactive Rain**
+(`arasaka-interactive-rain`). Both external rain entries point to their separate
+files above and declare textures required, no audio and no generic buffers.
 License information is included in descriptions as well as import headers;
 upstream may discard the additional JSON `license` field when resaving its index.
 Tokyo retains its original letterbox bars. Before adding the import header, the
@@ -595,7 +662,7 @@ the separate noncommercial/share-alike licenses and Dusti's archived evidence.
 Before replacement, the command prints a private backup directory under
 `${XDG_STATE_HOME:-$HOME/.local/state}/arasaka-kde/backups/shader-wallpaper-*`.
 It saves existing `plasma-org.kde.plasma.desktop-appletsrc` and `plasmashellrc`,
-the previous `package/`, replaced PNGs and custom shader under `artwork/`, and
+the previous `package/`, replaced PNGs and both custom shaders under `artwork/`, and
 the existing `$HOME/.local/libexec/arasaka-kde/layout.js` under `runtime/`.
 Symlinked targets, their parents, and backup sources are refused. A failed build,
 patch, or artifact validation leaves the previous package, artwork, and Plasma
@@ -607,17 +674,38 @@ Package replacement retains files absent from the new package under
 custom bundle subdirectories with buffers/resources. Saved gallery entries and
 custom categories are carried forward; matching relative paths, absolute paths,
 and local `file://` URLs retain their IDs, favorites, and thumbnail references.
-Tokyo, Dusti, and the generated external no-heart shader remain managed and are
-updated rather than restored from old copies. Conflicting non-managed files
-(including edits to bundled shaders), file/directory collisions, and duplicate
+Tokyo, Dusti, and both generated external rain shaders remain managed and are
+updated rather than restored from old copies, including on a repeat Interactive
+Rain installation; their saved gallery identities and favorites survive. Conflicting
+non-managed files (including edits to bundled shaders), file/directory collisions, and duplicate
 gallery IDs cause refusal before replacement, not silent overwrite. Preserve or
 rename the conflicting custom shader before retrying. Other package locations
 are replaced as before and remain available in the complete package backup.
 `--install-only` leaves the active shader selection and Plasma configuration alone.
 
+Both the installer and display reconciler use the same template in two phases.
+`prepare` persists and verifies the safe shader path/code and capture/playlist
+opt-outs with mouse off, records `arasakaRainPending=true` in that desktop's
+wallpaper `General` group, and requests the plugin selection. Plasma's scripting
+setter is cached: the real selection is committed at wrapper cleanup after the
+evaluation, not at assignment. Mouse stays off throughout that boundary.
+
+A separate `activate` evaluation uses fresh wrappers to read back the committed
+plugin and unchanged prepared settings. Only verified pending targets receive
+`mouseEnabled=true`; final settings are checked before clearing the pending marker.
+Both evaluations check enabled-output coverage and leave parked desktops alone.
+Interruption or an ignored mouse-enable write leaves managed initialization
+pending for retry, not falsely complete. A failed pre-selection setting write
+does not select the plugin. Ensure-only leaves existing custom shaders and input
+permissions alone; if a pending target's managed settings have changed, it cancels
+only the pending marker without restoring defaults or enabling input. Returning
+to Rain later cannot revive that cancelled opt-in. Explicit reapplication resets
+defaults during preparation, but activation never overwrites an intervening edit.
+
 Activation requires an explicit success marker with JSON readback of the plugin,
-paths, and configuration on every target desktop. That verifies configuration, not GPU
-rendering or pause behavior. If Plasma has cached a previous native plugin/QML
+paths, and configuration on every target desktop. A fresh wrapper after commit
+proves the selected host and configuration, not rendered readiness, GPU output,
+hover delivery or pause behavior. If Plasma has cached a previous native plugin/QML
 or has not discovered the new package, explicitly restart Plasma or log out/in
 and rerun the command. The installer never performs that restart automatically.
 For recovery, stop Plasma first, restore the saved configuration and affected
@@ -629,6 +717,66 @@ runtime files. Full deployment delegates shader installation and explicit resets
 to this command; display reconciliation handles layout/display priority, opt-in
 desktop-icon hiding, and shader initialization on non-shader desktops. Keep the
 paired runtime scripts together unless explicitly reverting that policy.
+
+For a retained patched source tree and native test build, run from the repository
+root (temporary source/build directories avoid live installation):
+
+```sh
+ARCHIVE=$(./bin/fetch-components shader-wallpaper)
+UPSTREAM=$(mktemp -d)
+BUILD=$(mktemp -d)
+tar -xzf "$ARCHIVE" --strip-components=1 -C "$UPSTREAM"
+patch --batch --forward --fuzz=0 -p1 -d "$UPSTREAM" \
+  -i "$PWD/assets/wallpapers/shaders/interactive-rain-host.patch"
+mkdir -p "$UPSTREAM/src/rain"
+cp native/rain/{dropletsimulation,rainfieldrenderer,raininput}.{h,cpp} "$UPSTREAM/src/rain/"
+cmake -S "$UPSTREAM" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release
+cmake --build "$BUILD" --parallel 2
+cp "$UPSTREAM/package/contents/ui/Shaders/Heartfelt.frag" "$UPSTREAM/Heartfelt_No_Heart.frag"
+patch --batch --forward --fuzz=0 -p1 -d "$UPSTREAM" \
+  -i "$PWD/assets/wallpapers/shaders/heartfelt-no-heart.patch"
+cp "$UPSTREAM/Heartfelt_No_Heart.frag" "$UPSTREAM/Interactive_Rain.frag"
+patch --batch --forward --fuzz=0 -p1 -d "$UPSTREAM" \
+  -i "$PWD/assets/wallpapers/shaders/interactive-rain.patch"
+
+python3 tests/apply_shader_wallpaper_test.py -v
+bash tests/reconcile_displays_test.sh
+python3 tests/rain_simulation_test.py -v
+python3 tests/apply_lockscreen_test.py -v
+cmake -S tests/native_rain -B build/rain-tests -DRAIN_UPSTREAM_SOURCE="$UPSTREAM"
+cmake --build build/rain-tests --parallel 2
+ctest --test-dir build/rain-tests --output-on-failure
+python3 tests/shader_smoke.py --rain-check --package "$UPSTREAM/package" \
+  --shader "$UPSTREAM/Interactive_Rain.frag" --texture assets/wallpapers/mikoshi-16x9.svg \
+  --screenshot /tmp/interactive-rain.png
+```
+
+The pure physics wrapper needs a C++20 compiler, not Qt/OpenGL. Native GL and QML
+checks require Qt development packages, Qt Quick Test and a working exposed
+OpenGL test window. `--rain-check` exercises rendering, pause/resume, selection
+failure and the desktop/lock/login input role matrix; it cannot be combined with
+`--blur-check`. Add `--previous-native /path/to/previous/contents/ui/shaderwallpaper`
+to check updated host QML with a copied previous module without modifying that module.
+Renderer testing observed animated opaque/nonblack artwork, paused frame stability,
+selection failure preservation, and HiDPI behavior in isolated windows, with native
+field/input checks on hardware and software GL. These are correctness observations,
+not a GPU/frame-time benchmark or proof of live Folder View hover delivery.
+**30 FPS is the configured target, not a measured live guarantee.** Interactive Rain
+rollout, physical multi-monitor delivery and live frame times still require desktop
+acceptance checks; no automatic Plasma restart or deployment is part of these tests.
+
+After packaging, the read-only gallery test uses the installed/staged package's
+actual selection function. Pass paths to its package and external no-heart shader;
+an optional third path overrides the default sibling `Interactive_Rain.frag`:
+
+```sh
+node tests/shader_gallery_smoke.js "$PACKAGE" "$NOHEART_SHADER" "$RAIN_SHADER"
+```
+
+It round-trips Tokyo, Dusti and both rain effects, checks mouse off/on permissions,
+keeps audio disabled and verifies that no generic A-D buffers are enabled. It does
+not call Plasma or change settings. `make test` runs the noninteractive repository
+suite; gallery and GPU checks are opt-in.
 
 The opt-in GPU check can isolate the blur's edge response, verify that three of
 every four lightning burst windows are absent and retained flashes use 25%

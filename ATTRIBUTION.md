@@ -21,7 +21,9 @@ Existing component exceptions remain unchanged:
 | `theme/kwin/effects/arasaka_tv_glitch_minimize/` | GPL-3.0-or-later; see `LICENSES/GPL-3.0-or-later.txt` |
 | `packaging/plasmalogin/debian/` | GPL-2.0-or-later for local packaging; the adapted debconf script retains its GPL version 2 notice; see `LICENSES/GPL-2.0-or-later.txt` and the packaging `copyright` file |
 | `theme/lockscreen/silent-plasma-6.7.patch` | Retains the upstream Silent KLockscreen GPL terms |
-| `assets/wallpapers/shaders/heartfelt-no-heart.patch` and `assets/wallpapers/shaders/dusti.patch` | CC BY-NC-SA 3.0, with the qualifications below |
+| `native/rain/rainfieldrenderer.{h,cpp}` and `native/rain/raininput.{h,cpp}` | Original project code with explicit GPL-3.0-or-later notices; see `LICENSES/GPL-3.0-or-later.txt` |
+| `assets/wallpapers/shaders/interactive-rain-host.patch` | GPL-3.0-or-later integration into the upstream wallpaper module |
+| `assets/wallpapers/shaders/heartfelt-no-heart.patch`, `assets/wallpapers/shaders/interactive-rain.patch`, and `assets/wallpapers/shaders/dusti.patch` | CC BY-NC-SA 3.0, with the qualifications below |
 
 Downloaded upstream components and shaders retain their own licenses and notices,
 as detailed below. The noncommercial shaders are not covered by the project EUPL
@@ -66,6 +68,16 @@ independent system-wide wallpaper package without copying the user's gallery.
 Bundled shaders retain their individual licenses rather than inheriting the
 wallpaper engine's GPL license.
 
+`native/rain/` contains original project droplet simulation, optical-field rendering
+and passive hover input code. The simulation follows the project EUPL-1.2 default;
+the renderer and input files retain their explicit GPL-3.0-or-later notices.
+The installer compiles all six sources/headers into upstream's existing GPL native
+module using `assets/wallpapers/shaders/interactive-rain-host.patch`. This combined
+module is distributed under the upstream GPL terms, using the EUPL's compatibility
+provisions for the original simulation code, not relicensing upstream as EUPL.
+The integration patch adapts the upstream engine, build list and host QML and
+retains their GPL notices. These code licenses do not apply to the adapted shader.
+
 [Plasma Login Manager](https://invent.kde.org/plasma/plasma-login-manager) 6.7.4 is
 by KDE contributors, with daemon/authentication code derived from SDDM by
 Abdurrahman AVCI, Alexey Rochev, Jerome Leclanche and other upstream contributors.
@@ -90,6 +102,16 @@ for the no-heart rain effect over the existing Arasaka artwork. The generated
 CC BY-NC-SA 3.0, including its noncommercial and share-alike conditions. It does
 not replace the original packaged shader; the complete shader source is fetched
 from the pinned archive rather than duplicated in this repository.
+
+**Interactive Rain** is a separate local adaptation of BigWings' Heartfelt, made by
+applying `assets/wallpapers/shaders/interactive-rain.patch` to a copy of the already
+adapted no-heart shader. It replaces procedural drop layers with the native
+`iRainField` optical field while retaining artwork filtering, fog, postprocessing
+and reduced lightning. The generated `Interactive_Rain.frag` preserves BigWings'
+author/contact/license header and original credits; it does not overwrite either
+Heartfelt original or Heartfelt No Heart. The patch and generated shader remain
+**CC BY-NC-SA 3.0**, including noncommercial and share-alike conditions, not the
+project EUPL or the native module's GPL. The gallery also carries this attribution.
 
 **Tokyo** ([Shadertoy Xtf3zn](https://www.shadertoy.com/view/Xtf3zn)) is by
 Reinder Nijhoff (`reinder`, 2014), under the explicit

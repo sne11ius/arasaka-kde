@@ -1,0 +1,1003 @@
+--- a/src/core/shaderengine.h
++++ b/src/core/shaderengine.h
+@@ -17,6 +17,11 @@
+ #include <QVector4D>
+ #include <QVector3D>
+ #include <QVector2D>
++#include "rain/dropletsimulation.h"
++#include "rain/rainfieldrenderer.h"
++#include "rain/raininput.h"
++#include <atomic>
++#include <limits>
+ 
+ class QFileSystemWatcher;
+ #include <memory>
+@@ -26,6 +31,10 @@
+ class CursorTracker;
+ class AudioCapture;
+ 
++struct ShaderRendererLifetime {
++    std::atomic<bool> active{true};
++};
++
+ /**
+  * @brief Main shader rendering engine using QQuickFramebufferObject
+  * 
+@@ -43,6 +52,8 @@
+     
+     // Playback control
+     Q_PROPERTY(bool running READ running WRITE setRunning NOTIFY runningChanged)
++    Q_PROPERTY(bool rainActive READ rainActive NOTIFY rainActiveChanged)
++    Q_PROPERTY(bool rainLockScreenHost READ rainLockScreenHost WRITE setRainLockScreenHost NOTIFY rainLockScreenHostChanged)
+     Q_PROPERTY(qreal speed READ speed WRITE setSpeed NOTIFY speedChanged)
+     Q_PROPERTY(int targetFps READ targetFps WRITE setTargetFps NOTIFY targetFpsChanged)
+     Q_PROPERTY(int currentFps READ currentFps NOTIFY currentFpsChanged)
+@@ -171,6 +182,8 @@
+     QUrl shaderSource() const { return m_shaderSource; }
+     QString shaderCode() const { return m_shaderCode; }
+     bool running() const { return m_running; }
++    bool rainActive() const { return m_rainActive; }
++    bool rainLockScreenHost() const { return m_rainLockScreenHost; }
+     qreal speed() const { return m_speed; }
+     int targetFps() const { return m_targetFps; }
+     int currentFps() const { return m_currentFps; }
+@@ -254,6 +267,7 @@
+     void setShaderSource(const QUrl &source);
+     void setShaderCode(const QString &code);
+     void setRunning(bool running);
++    void setRainLockScreenHost(bool lockScreenHost);
+     void setSpeed(qreal speed);
+     void setTargetFps(int fps);
+     void setResolutionScale(qreal scale);
+@@ -325,6 +339,8 @@
+     void shaderSourceChanged();
+     void shaderCodeChanged();
+     void runningChanged();
++    void rainActiveChanged();
++    void rainLockScreenHostChanged();
+     void speedChanged();
+     void targetFpsChanged();
+     void currentFpsChanged();
+@@ -404,6 +420,15 @@
+     void handleWindowVisibilityChanged();
+ 
+ private:
++    friend class ShaderEngineRenderer;
++    friend class RainHostTest;
++    void setRainActive(bool active);
++    bool m_rainActive = false;
++    bool m_rainLockScreenHost = false;
++    std::unique_ptr<arasaka::rain::RainInput> m_rainInput;
++    std::weak_ptr<ShaderRendererLifetime> m_rendererLifetime;
++    quint64 m_selectionRevision = 0;
++    quint64 m_rainResetRevision = 0;
+     void loadShaderFromSource();
+     void loadShaderPackageFromDisk();
+     void setError(const QString &error);
+@@ -533,11 +558,13 @@
+     void synchronize(QQuickFramebufferObject *item) override;
+ 
+ private:
++    friend class RainHostTest;
+     void initializeGL();
+-    void compileShader(const QString &code);
++    bool compileShader(const QString &code);
++    void publishRainMode();
+     void compileBufferShader(int bufferIndex, const QString &code);
+-    void reportCompileFailure(const QString &stage, const QString &log);
+-    void reportCompileSuccess();
++    void reportCompileFailure(const QString &stage, const QString &log, int bufferIndex = -1);
++    void reportCompileStatus();
+     void ensureBufferFBOs(int bufferIndex);
+     void renderBuffer(int bufferIndex);
+     void renderMainPass();
+@@ -551,10 +578,21 @@
+ 
+     bool m_initialized = false;
+     bool m_needsRecompile = false;
++    std::shared_ptr<ShaderRendererLifetime> m_lifetime = std::make_shared<ShaderRendererLifetime>();
++    quint64 m_selectionRevision = 0;
++    quint64 m_attemptedSelectionRevision = std::numeric_limits<quint64>::max();
++    bool m_mainSelectionFailed = false;
++    QSizeF m_rainLogicalSize;
++    std::unique_ptr<arasaka::rain::DropletSimulation> m_rainSimulation;
++    std::unique_ptr<arasaka::rain::RainFieldRenderer> m_rainField;
++    arasaka::rain::PointerSnapshot m_rainPointer;
++    quint64 m_rainResetRevision = 0;
++    quint64 m_rainInputInvalidation = 0;
+     
+     // Main shader
+     std::unique_ptr<QOpenGLShaderProgram> m_shaderProgram;
+     QString m_currentShaderCode;
++    QUrl m_currentShaderSource; // Package identity of the successfully committed main pass.
+     QString m_currentCommonCode;  // Common code to prepend to all shaders
+     
+     // Buffer shaders and FBOs
+@@ -563,6 +601,10 @@
+     std::array<std::unique_ptr<QOpenGLFramebufferObject>, 4> m_bufferFBOsBack; // Ping-pong
+     std::array<bool, 4> m_useBuffers = {false, false, false, false};
+     std::array<QString, 4> m_bufferCodes;
++    std::array<QString, 4> m_bufferCommonCodes; // Common source of each successfully linked pass.
++    std::array<QString, 4> m_bufferAttemptedCodes;
++    std::array<QString, 4> m_bufferAttemptedCommonCodes;
++    std::array<QString, 4> m_bufferCompileLogs;
+     // A buffer pass feeds its own previous frame, so its FBO is state, not a
+     // scratch surface. ensureBufferFBOs() only clears on CREATION, which means
+     // that state used to survive a shader switch: load a new shader and it
+@@ -571,7 +613,7 @@
+     // shader's own "is this the first frame" test is a comparison, which is
+     // false for NaN, so the buffer can never re-seed itself. The result is a
+     // permanently black wallpaper that survives switching shaders.
+-    // Set when the code behind a buffer changes; honoured in renderBuffer().
++    // Set on successful buffer replacement or main-package switch; honoured in renderBuffer().
+     std::array<bool, 4> m_bufferNeedsClear = {false, false, false, false};
+     
+     // Channel textures
+@@ -677,4 +719,3 @@
+ };
+ 
+ #endif // SHADERENGINE_H
+-
+--- a/src/core/shaderengine.cpp
++++ b/src/core/shaderengine.cpp
+@@ -16,6 +16,7 @@
+ #include <QOpenGLExtraFunctions>
+ #include <QImage>
+ #include <QQuickItemGrabResult>
++#include <QQuickOpenGLUtils>
+ #include <cmath>
+ 
+ // Default vertex shader for fullscreen quad
+@@ -167,6 +168,7 @@
+     // even if many QTimer ticks were coalesced or the window was hidden
+     // (legacy #43, #106).
+ 
++    m_lastTimeDelta = 0;
+     if (!m_running) return;
+ 
+     const qint64 elapsedNs = m_frameTimer.isValid() ? m_frameTimer.nsecsElapsed() : 0;
+@@ -287,6 +289,7 @@
+     
+     qDebug() << "ShaderEngine::setShaderSource changed to:" << source;
+     m_shaderSource = source;
++    ++m_selectionRevision;
+     m_loadShadersFromDisk = !m_shaderSource.isEmpty();
+ 
+     if (m_loadShadersFromDisk) {
+@@ -356,6 +359,7 @@
+     
+     qDebug() << "ShaderEngine::setShaderCode changed, new length:" << code.length();
+     m_shaderCode = code;
++    ++m_selectionRevision;
+     
+     Q_EMIT shaderCodeChanged();
+     Q_EMIT shaderRecompiled();
+@@ -366,6 +370,8 @@
+ {
+     if (m_running == running) return;
+     m_running = running;
++    m_lastTimeDelta = 0;
++    if (m_rainInput) m_rainInput->setEnabled(m_running && m_mouseEnabled && std::isfinite(m_speed) && m_speed > 0);
+ 
+     if (m_running) {
+         // Reset the per-frame timer so the first frame after un-pausing
+@@ -383,6 +389,12 @@
+ {
+     if (qFuzzyCompare(m_speed, speed)) return;
+     m_speed = speed;
++    m_lastTimeDelta = 0;
++    m_frameTimer.restart();
++    if (m_rainInput) {
++        m_rainInput->invalidate();
++        m_rainInput->setEnabled(m_running && m_mouseEnabled && std::isfinite(m_speed) && m_speed > 0);
++    }
+     Q_EMIT speedChanged();
+ }
+ 
+@@ -446,6 +458,7 @@
+ {
+     if (m_mouseEnabled == enabled) return;
+     m_mouseEnabled = enabled;
++    if (m_rainInput) m_rainInput->setEnabled(m_running && m_mouseEnabled && std::isfinite(m_speed) && m_speed > 0);
+     Q_EMIT mouseEnabledChanged();
+ }
+ 
+@@ -564,6 +577,7 @@
+ 
+     if (m_commonCode == code) return;
+     m_commonCode = code;
++    ++m_selectionRevision;
+     Q_EMIT commonCodeChanged();
+     Q_EMIT shaderRecompiled();  // Force recompile of all shaders with new common code
+     update();
+@@ -764,6 +778,9 @@
+ 
+ void ShaderEngine::resetTime()
+ {
++    ++m_rainResetRevision;
++    m_lastTimeDelta = 0;
++    if (m_rainInput) m_rainInput->invalidate();
+     m_iTime = 0.0;
+     m_iFrame = 0;
+     m_frameTimer.restart();
+@@ -907,6 +924,7 @@
+     bool changed = false;
+     if (m_shaderCode != mainCode) {
+         m_shaderCode = mainCode;
++        ++m_selectionRevision;
+         Q_EMIT shaderCodeChanged();
+         Q_EMIT shaderRecompiled();
+         changed = true;
+@@ -937,6 +955,7 @@
+         const QString common = bufferData[QStringLiteral("commonCode")].toString();
+         if (m_commonCode != common) {
+             m_commonCode = common;
++            ++m_selectionRevision;
+             Q_EMIT commonCodeChanged();
+             Q_EMIT shaderRecompiled();
+             changed = true;
+@@ -1076,12 +1095,41 @@
+ // Renderer Implementation
+ // ============================================================================
+ 
++void ShaderEngine::setRainLockScreenHost(bool lockScreenHost)
++{
++    if (m_rainLockScreenHost == lockScreenHost) return;
++    m_rainLockScreenHost = lockScreenHost;
++    if (m_rainInput) m_rainInput->setLockScreenHost(lockScreenHost);
++    Q_EMIT rainLockScreenHostChanged();
++}
++
++void ShaderEngine::setRainActive(bool active)
++{
++    if (m_rainActive == active) return;
++    m_rainActive = active;
++    if (active) {
++        m_rainInput = std::make_unique<arasaka::rain::RainInput>(this);
++        m_rainInput->setLockScreenHost(m_rainLockScreenHost);
++        m_rainInput->setEnabled(m_running && m_mouseEnabled && std::isfinite(m_speed) && m_speed > 0);
++    } else {
++        m_rainInput.reset();
++    }
++    Q_EMIT rainActiveChanged();
++}
++
+ ShaderEngineRenderer::ShaderEngineRenderer()
+ {
+ }
+ 
+ ShaderEngineRenderer::~ShaderEngineRenderer()
+ {
++    m_lifetime->active = false;
++    if (m_engineForCallbacks) {
++        QMetaObject::invokeMethod(m_engineForCallbacks, [engine = m_engineForCallbacks, lifetime = m_lifetime]() {
++            if (engine && engine->m_rendererLifetime.lock() == lifetime)
++                engine->setRainActive(false);
++        }, Qt::QueuedConnection);
++    }
+     auto *ctx = QOpenGLContext::currentContext();
+     if (ctx) {
+         auto *f = ctx->extraFunctions();
+@@ -1122,6 +1170,7 @@
+     // (synchronize() may have already compiled the custom shader)
+     if (!m_shaderProgram || !m_shaderProgram->isLinked()) {
+         qDebug() << "initializeGL: No shader yet, compiling default";
++        // A cold-start fallback is not successful compilation of the user's selection.
+         compileShader(QLatin1String(defaultShader));
+     } else {
+         qDebug() << "initializeGL: Keeping existing shader (code length:" << m_currentShaderCode.length() << ")";
+@@ -1164,7 +1213,7 @@
+     f->glBindVertexArray(0);
+ }
+ 
+-void ShaderEngineRenderer::compileShader(const QString &code)
++bool ShaderEngineRenderer::compileShader(const QString &code)
+ {
+     qDebug() << ">>> compileShader called, code length:" << code.length();
+ 
+@@ -1179,7 +1228,7 @@
+         const QString log = candidate->log();
+         qWarning() << "Vertex shader compilation failed:" << log;
+         reportCompileFailure(QStringLiteral("Vertex shader (main pass)"), log);
+-        return;  // m_shaderProgram untouched
++        return false;  // m_shaderProgram and rain untouched
+     }
+ 
+     QString fullFragmentShader = QLatin1String(shaderHeader);
+@@ -1194,26 +1243,62 @@
+         const QString log = candidate->log();
+         qWarning() << "Main fragment shader compilation failed:" << log;
+         reportCompileFailure(QStringLiteral("Fragment shader (main pass)"), log);
+-        return;  // m_shaderProgram untouched
++        return false;  // m_shaderProgram and rain untouched
+     }
+ 
+     if (!candidate->link()) {
+         const QString log = candidate->log();
+         qWarning() << "Main shader program linking failed:" << log;
+         reportCompileFailure(QStringLiteral("Linker (main pass)"), log);
+-        return;  // m_shaderProgram untouched
++        return false;  // m_shaderProgram and rain untouched
+     }
+ 
++    bool wantsRain = false;
++    for (QString line : code.split(QLatin1Char('\n'))) {
++        if (line.endsWith(QLatin1Char('\r'))) line.chop(1);
++        if (line == QLatin1String("// @arasaka-effect rain-v1")) wantsRain = true;
++    }
++    std::unique_ptr<arasaka::rain::DropletSimulation> simulation;
++    std::unique_ptr<arasaka::rain::RainFieldRenderer> field;
++    if (wantsRain) {
++        simulation = std::make_unique<arasaka::rain::DropletSimulation>();
++        field = std::make_unique<arasaka::rain::RainFieldRenderer>();
++        QString error;
++        simulation->reset(m_rainLogicalSize.width(), m_rainLogicalSize.height());
++        if (!field->initialize(m_rainLogicalSize, &error) || !field->render(simulation->drops(), 0)) {
++            reportCompileFailure(QStringLiteral("Rain resources"), error.isEmpty() ? QStringLiteral("Initial field draw failed") : error);
++            return false;
++        }
++    }
+     qDebug() << ">>> Main shader compiled successfully!";
+     m_shaderProgram = std::move(candidate);
++    m_rainSimulation = std::move(simulation);
++    m_rainField = std::move(field);
++    m_rainPointer = {};
+     m_currentShaderCode = code;
+-    reportCompileSuccess();
++    return true;
++}
++
++void ShaderEngineRenderer::publishRainMode()
++{
++    if (!m_engineForCallbacks) return;
++    const bool active = bool(m_rainField);
++    if (m_engineForCallbacks->rainActive() == active) return;
++    QMetaObject::invokeMethod(m_engineForCallbacks,
++        [engine = m_engineForCallbacks, lifetime = m_lifetime, revision = m_selectionRevision, active]() {
++            if (engine && lifetime->active && engine->m_rendererLifetime.lock() == lifetime
++                && engine->m_selectionRevision == revision) engine->setRainActive(active);
++        }, Qt::QueuedConnection);
+ }
+ 
+ void ShaderEngineRenderer::compileBufferShader(int bufferIndex, const QString &code)
+ {
+     if (bufferIndex < 0 || bufferIndex >= 4) return;
+ 
++    // Failed candidates are attempts too; retry only after either requested source changes.
++    m_bufferAttemptedCodes[bufferIndex] = code;
++    m_bufferAttemptedCommonCodes[bufferIndex] = m_currentCommonCode;
++
+     qDebug() << "Compiling Buffer" << bufferIndex << "shader, code length:" << code.length();
+ 
+     // Same swap-on-success pattern as the main pass — keep the working
+@@ -1226,7 +1311,7 @@
+     if (!program->addShaderFromSourceCode(QOpenGLShader::Vertex, vertexShaderSource)) {
+         const QString log = program->log();
+         qWarning() << "Buffer" << bufferIndex << "vertex shader compilation failed:" << log;
+-        reportCompileFailure(QStringLiteral("Vertex shader (buffer %1)").arg(bufLetter), log);
++        reportCompileFailure(QStringLiteral("Vertex shader (buffer %1)").arg(bufLetter), log, bufferIndex);
+         return;
+     }
+     
+@@ -1242,40 +1327,56 @@
+     if (!program->addShaderFromSourceCode(QOpenGLShader::Fragment, fullFragmentShader)) {
+         const QString log = program->log();
+         qWarning() << "Buffer" << bufferIndex << "fragment shader compilation failed:" << log;
+-        reportCompileFailure(QStringLiteral("Fragment shader (buffer %1)").arg(bufLetter), log);
++        reportCompileFailure(QStringLiteral("Fragment shader (buffer %1)").arg(bufLetter), log, bufferIndex);
+         return;
+     }
+ 
+     if (!program->link()) {
+         const QString log = program->log();
+         qWarning() << "Buffer" << bufferIndex << "shader program linking failed:" << log;
+-        reportCompileFailure(QStringLiteral("Linker (buffer %1)").arg(bufLetter), log);
++        reportCompileFailure(QStringLiteral("Linker (buffer %1)").arg(bufLetter), log, bufferIndex);
+         return;
+     }
+ 
+     qDebug() << "Buffer" << bufferIndex << "shader compiled successfully!";
+     m_bufferPrograms[bufferIndex] = std::move(candidate);
+     m_bufferCodes[bufferIndex] = code;
+-    reportCompileSuccess();
++    m_bufferCommonCodes[bufferIndex] = m_currentCommonCode;
++    m_bufferCompileLogs[bufferIndex].clear();
++    m_bufferNeedsClear[bufferIndex] = true;
+ }
+ 
+-void ShaderEngineRenderer::reportCompileFailure(const QString &stage, const QString &log)
+-{
++void ShaderEngineRenderer::reportCompileFailure(const QString &stage, const QString &log, int bufferIndex)
++{
++    const QString full = QStringLiteral("%1 failed:\n%2")
++        .arg(stage, log.isEmpty() ? QStringLiteral("(no log)") : log);
++    if (bufferIndex >= 0 && bufferIndex < 4) {
++        m_bufferCompileLogs[bufferIndex] = full;
++        return; // Publish all active buffer failures after the candidate loop.
++    }
+     if (m_engineForCallbacks) {
+-        const QString full = QStringLiteral("%1 failed:\n%2")
+-            .arg(stage, log.isEmpty() ? QStringLiteral("(no log)") : log);
+-        QMetaObject::invokeMethod(m_engineForCallbacks.data(), "setCompileLog",
+-                                  Qt::QueuedConnection,
+-                                  Q_ARG(QString, full));
++        QMetaObject::invokeMethod(m_engineForCallbacks,
++            [engine = m_engineForCallbacks, lifetime = m_lifetime, revision = m_selectionRevision, full]() {
++                if (engine && lifetime->active && engine->m_rendererLifetime.lock() == lifetime
++                    && engine->m_selectionRevision == revision) engine->setCompileLog(full);
++            }, Qt::QueuedConnection);
+     }
+ }
+ 
+-void ShaderEngineRenderer::reportCompileSuccess()
++void ShaderEngineRenderer::reportCompileStatus()
+ {
+     if (m_engineForCallbacks) {
+-        QMetaObject::invokeMethod(m_engineForCallbacks.data(), "setCompileLog",
+-                                  Qt::QueuedConnection,
+-                                  Q_ARG(QString, QString()));
++        QStringList failures;
++        for (int i = 0; i < 4; ++i) {
++            if (m_useBuffers[i] && !m_bufferCompileLogs[i].isEmpty())
++                failures.append(m_bufferCompileLogs[i]);
++        }
++        const QString log = failures.join(QStringLiteral("\n\n"));
++        QMetaObject::invokeMethod(m_engineForCallbacks,
++            [engine = m_engineForCallbacks, lifetime = m_lifetime, revision = m_selectionRevision, log]() {
++                if (engine && lifetime->active && engine->m_rendererLifetime.lock() == lifetime
++                    && engine->m_selectionRevision == revision) engine->setCompileLog(log);
++            }, Qt::QueuedConnection);
+     }
+ }
+ 
+@@ -1700,6 +1801,12 @@
+     for (int i = 0; i < 4; i++) {
+         bindChannelInput(i, m_imageChannelMapping[i], -1);  // -1 = no current buffer (image pass)
+     }
++    if (m_rainField) {
++        f->glActiveTexture(GL_TEXTURE4);
++        f->glBindTexture(GL_TEXTURE_2D, m_rainField->texture());
++        m_shaderProgram->setUniformValue("iRainField", 4);
++        m_shaderProgram->setUniformValue("iRainSize", QVector2D(m_rainField->logicalSize().width(), m_rainField->logicalSize().height()));
++    }
+     
+     // Update audio texture data if enabled. bind() binds on the currently
+     // active texture unit, so the audio channel's unit must be selected
+@@ -1737,6 +1844,24 @@
+     // (Re)allocate the low-res FBO if the resolution scale changed.
+     ensureLowResFBO();
+ 
++    if (m_rainField && m_rainSimulation) {
++        const double dt = std::isfinite(m_iTimeDelta)
++            ? std::clamp(double(m_iTimeDelta), 0., arasaka::rain::DropletSimulation::maximumFrameSeconds) : 0.;
++        m_rainSimulation->advance(dt, m_rainPointer);
++        if (!m_rainField->render(m_rainSimulation->drops(), dt))
++            reportCompileFailure(QStringLiteral("Rain field"), QStringLiteral("OpenGL field draw failed"));
++    }
++    f->glDisable(GL_BLEND);
++    f->glBlendEquation(GL_FUNC_ADD);
++    f->glDisable(GL_DEPTH_TEST);
++    f->glDepthMask(GL_FALSE);
++    f->glDisable(GL_STENCIL_TEST);
++    f->glDisable(GL_SCISSOR_TEST);
++    f->glDisable(GL_CULL_FACE);
++    f->glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
++    framebufferObject()->bind();
++    f->glViewport(0, 0, m_fboSize.width(), m_fboSize.height());
++
+     f->glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+     f->glClear(GL_COLOR_BUFFER_BIT);
+ 
+@@ -1779,6 +1904,9 @@
+ 
+     // Toggle ping-pong for next frame
+     m_pingPong = !m_pingPong;
++    // Qt may render again without synchronize(): one synchronized delta is consumed once.
++    m_iTimeDelta = 0;
++    QQuickOpenGLUtils::resetOpenGLState();
+ }
+ 
+ void ShaderEngineRenderer::ensureLowResFBO()
+@@ -1880,11 +2008,43 @@
+ {
+     auto *engine = static_cast<ShaderEngine*>(item);
+     m_engineForCallbacks = engine;
+-
+-    // Advance iTime exactly once per rendered frame, with a wall-clock
+-    // delta that gets clamped to a sane max so post-suspend / hidden-window
+-    // resumes don't cause shader time to leap forward (legacy #43, #106).
++    engine->m_rendererLifetime = m_lifetime;
++    m_selectionRevision = engine->m_selectionRevision;
++    // Use the same admitted frame delta for pointer timestamps and the fixed-step consumer.
+     engine->accumulateFrame();
++    m_iTimeDelta = engine->running() ? engine->lastTimeDelta() : 0;
++    m_rainLogicalSize = engine->size();
++    if (engine->m_rainInput) {
++        engine->m_rainInput->refreshGeometry();
++        m_rainPointer = engine->m_rainInput->synchronize(std::clamp(double(m_iTimeDelta), 0.0,
++            arasaka::rain::DropletSimulation::maximumFrameSeconds));
++        const auto invalidation = engine->m_rainInput->invalidationSequence();
++        if (m_rainSimulation && (invalidation != m_rainInputInvalidation || !m_rainPointer.valid))
++            m_rainSimulation->invalidatePointer();
++        m_rainInputInvalidation = invalidation;
++    } else {
++        m_rainPointer = {};
++        if (m_rainSimulation) m_rainSimulation->invalidatePointer();
++    }
++    if (m_rainField && m_rainLogicalSize != m_rainField->logicalSize() && !m_rainLogicalSize.isEmpty()) {
++        QString error;
++        if (m_rainField->resize(m_rainLogicalSize, &error)) {
++            m_rainSimulation->resize(m_rainLogicalSize.width(), m_rainLogicalSize.height());
++            m_rainPointer = {};
++        } else reportCompileFailure(QStringLiteral("Rain resize"), error);
++    }
++    if (m_rainResetRevision != engine->m_rainResetRevision) {
++        m_rainResetRevision = engine->m_rainResetRevision;
++        if (m_rainField) {
++            auto field = std::make_unique<arasaka::rain::RainFieldRenderer>();
++            QString error;
++            if (field->initialize(m_rainLogicalSize, &error)) {
++                m_rainField = std::move(field);
++                m_rainSimulation->reset(m_rainLogicalSize.width(), m_rainLogicalSize.height());
++                m_rainPointer = {};
++            } else reportCompileFailure(QStringLiteral("Rain reset"), error);
++        }
++    }
+ 
+     // Pass frame time from previous render back to the engine
+     if (m_lastFrameTime > 0.0) {
+@@ -1895,7 +2055,6 @@
+ 
+     // Pull updated timing/mouse uniforms into the renderer copy.
+     m_iTime = engine->iTime();
+-    m_iTimeDelta = engine->lastTimeDelta();
+     m_iFrameRate = engine->currentFps() > 0
+         ? float(engine->currentFps())
+         : float(engine->targetFps());
+@@ -1937,6 +2096,73 @@
+     QTime time = now.time();
+     float secondsSinceMidnight = time.hour() * 3600.0f + time.minute() * 60.0f + time.second() + time.msec() / 1000.0f;
+     m_iDate = QVector4D(date.year(), date.month(), date.day(), secondsSinceMidnight);
++
++    // Live inputs belong to the retained pipeline too, even if a selection below fails.
++    // Update audio settings
++    m_audioEnabled = engine->audioEnabled();
++    m_audioChannel = engine->audioChannel();
++
++    // Copy audio data (convert QVariantList to vector<float>)
++    if (m_audioEnabled) {
++        QVariantList audioList = engine->audioData();
++        m_audioData.resize(audioList.size());
++        for (int i = 0; i < audioList.size(); i++) {
++            m_audioData[i] = audioList[i].toFloat();
++        }
++    }
++
++    // --- Window tracking with velocity extrapolation -------------------
++    // WindowTracker polls XCB at ~30Hz; render runs at 60+Hz. Without
++    // extrapolation, m_windowRects stays identical for 2 render frames
++    // then teleports - wakes look like 30Hz step-judder. We snapshot
++    // each poll into m_windowRectsBase and integrate velocity * age
++    // every render frame so the rect smoothly tracks the on-screen
++    // window position. Age is capped so a runaway extrapolation (e.g.
++    // WindowTracker disabled) can't drift indefinitely.
++    m_windowRectsPrev = m_windowRects;
++    m_windowsEnabled = engine->windowsEnabled();
++    m_windowCount = engine->windowCount();
++
++    if (m_windowsEnabled) {
++        const qint64 seq = engine->windowRectsSequence();
++        if (seq != m_windowRectsSequenceSeen) {
++            m_windowRectsSequenceSeen = seq;
++            const QVariantList rects = engine->windowRects();
++            for (int i = 0; i < MAX_WINDOWS * 4; ++i) {
++                m_windowRectsBase[i] = (i < rects.size()) ? rects[i].toFloat() : 0.0f;
++            }
++            const QVariantList velocities = engine->windowVelocities();
++            for (int i = 0; i < MAX_WINDOWS * 2; ++i) {
++                m_windowVelocities[i] = (i < velocities.size()) ? velocities[i].toFloat() : 0.0f;
++            }
++            m_windowRectsBaseTimer.restart();
++        }
++
++        // Time since last poll, capped to ~80 ms so dropped polls don't
++        // let a window's wake drift away from where the window actually is.
++        float ageSec = 0.0f;
++        if (m_windowRectsBaseTimer.isValid()) {
++            ageSec = std::min(0.08f, float(m_windowRectsBaseTimer.elapsed()) / 1000.0f);
++        }
++
++        for (int i = 0; i < MAX_WINDOWS; ++i) {
++            m_windowRects[i * 4 + 0] = m_windowRectsBase[i * 4 + 0]
++                                     + m_windowVelocities[i * 2 + 0] * ageSec;
++            m_windowRects[i * 4 + 1] = m_windowRectsBase[i * 4 + 1]
++                                     + m_windowVelocities[i * 2 + 1] * ageSec;
++            m_windowRects[i * 4 + 2] = m_windowRectsBase[i * 4 + 2];
++            m_windowRects[i * 4 + 3] = m_windowRectsBase[i * 4 + 3];
++        }
++    }
++
++    // Mirror experimental screen/desktop state into the renderer
++    // so renderMainPass / renderBuffer can plug them in as uniforms.
++    m_screenOffset        = engine->screenOffset();
++    m_screenIndex         = engine->screenIndex();
++    m_screenCount         = engine->screenCount();
++    m_virtualDesktop      = engine->virtualDesktop();
++    m_virtualDesktopCount = engine->virtualDesktopCount();
++    m_virtualDesktopAnim  = engine->virtualDesktopAnim();
+     
+     // Check if common code changed - if so, recompile everything
+     QString newCommonCode = engine->commonCode();
+@@ -1972,33 +2198,35 @@
+         }
+     }
+     
+-    // Force recompile if we have code but no valid program
+-    bool needsCompile = false;
+-    if (!newCode.isEmpty()) {
+-        if (newCode != m_currentShaderCode) {
+-            qDebug() << "Main shader code CHANGED, need recompile";
+-            needsCompile = true;
+-            // A different shader package: every buffer's state is now stale.
+-            m_bufferNeedsClear.fill(true);
+-        } else if (commonCodeChanged) {
+-            qDebug() << "Common code changed, need recompile main shader";
+-            needsCompile = true;
+-        } else if (!m_shaderProgram || !m_shaderProgram->isLinked()) {
+-            qDebug() << "Main shader program invalid, need compile";
+-            needsCompile = true;
+-        }
++    // A failed disk read leaves shaderCode at the prior selection, not a new candidate.
++    if (engine->m_loadShadersFromDisk && engine->hasError()) {
++        publishRainMode();
++        return;
+     }
++    // Try each selection once; a rejected edit must not recompile on every frame.
++    const bool needsCompile = !newCode.isEmpty() && m_attemptedSelectionRevision != m_selectionRevision;
+     
+     if (needsCompile) {
+         qDebug() << "Compiling main shader, code length:" << newCode.length();
+-        compileShader(newCode);
++        m_attemptedSelectionRevision = m_selectionRevision;
++        m_mainSelectionFailed = !compileShader(newCode);
++        if (!m_mainSelectionFailed && m_currentShaderSource != engine->shaderSource()) {
++            // A gallery/package switch starts fresh even when returning to cached buffer code.
++            // Failed candidates and hot edits within the retained package preserve feedback.
++            m_currentShaderSource = engine->shaderSource();
++            m_bufferNeedsClear.fill(true);
++        }
+     }
++    publishRainMode();
++    // A rejected selection must not replace the working image's channels/buffers either.
++    if (m_mainSelectionFailed) return;
+     
+     // Update buffer settings
+-    m_useBuffers[0] = engine->useBufferA();
+-    m_useBuffers[1] = engine->useBufferB();
+-    m_useBuffers[2] = engine->useBufferC();
+-    m_useBuffers[3] = engine->useBufferD();
++    const std::array<bool, 4> requestedBuffers = {
++        engine->useBufferA(), engine->useBufferB(), engine->useBufferC(), engine->useBufferD()
++    };
++    bool compileStatusChanged = needsCompile || requestedBuffers != m_useBuffers;
++    m_useBuffers = requestedBuffers;
+     
+     // Compile buffer shaders if changed (or common code changed)
+     QString bufferCodes[4] = {
+@@ -2011,13 +2239,11 @@
+     for (int i = 0; i < 4; i++) {
+         if (m_useBuffers[i]) {
+             if (!bufferCodes[i].isEmpty()) {
+-                // Recompile if buffer code changed OR common code changed
+-                if (bufferCodes[i] != m_bufferCodes[i] || commonCodeChanged) {
++                // Skipped passes retain pending edits; rejected pairs are attempted only once.
++                if (bufferCodes[i] != m_bufferAttemptedCodes[i] || m_bufferAttemptedCommonCodes[i] != m_currentCommonCode) {
+                     qDebug() << "Buffer" << i << "code changed, recompiling. Length:" << bufferCodes[i].length();
+                     compileBufferShader(i, bufferCodes[i]);
+-                    // New code, so the accumulated state belongs to the old
+-                    // shader - discard it rather than hand it over.
+-                    m_bufferNeedsClear[i] = true;
++                    compileStatusChanged = true;
+                 }
+             } else {
+                 static bool warned[4] = {false, false, false, false};
+@@ -2029,6 +2255,9 @@
+         }
+     }
+     
++    // A main/other-buffer success must not hide a retained buffer's failed candidate.
++    if (compileStatusChanged) reportCompileStatus();
++
+     // Debug: log channel mappings
+     static bool loggedMappings = false;
+     if (!loggedMappings && (m_useBuffers[0] || m_useBuffers[1] || m_useBuffers[2] || m_useBuffers[3])) {
+@@ -2101,70 +2330,4 @@
+             m_bufferChannelMapping[b][c] = bufferChannels[b][c].toInt();
+         }
+     }
+-    
+-    // Update audio settings
+-    m_audioEnabled = engine->audioEnabled();
+-    m_audioChannel = engine->audioChannel();
+-    
+-    // Copy audio data (convert QVariantList to vector<float>)
+-    if (m_audioEnabled) {
+-        QVariantList audioList = engine->audioData();
+-        m_audioData.resize(audioList.size());
+-        for (int i = 0; i < audioList.size(); i++) {
+-            m_audioData[i] = audioList[i].toFloat();
+-        }
+-    }
+-    
+-    // --- Window tracking with velocity extrapolation -------------------
+-    // WindowTracker polls XCB at ~30Hz; render runs at 60+Hz. Without
+-    // extrapolation, m_windowRects stays identical for 2 render frames
+-    // then teleports — wakes look like 30Hz step-judder. We snapshot
+-    // each poll into m_windowRectsBase and integrate velocity * age
+-    // every render frame so the rect smoothly tracks the on-screen
+-    // window position. Age is capped so a runaway extrapolation (e.g.
+-    // WindowTracker disabled) can't drift indefinitely.
+-    m_windowRectsPrev = m_windowRects;
+-    m_windowsEnabled = engine->windowsEnabled();
+-    m_windowCount = engine->windowCount();
+-
+-    if (m_windowsEnabled) {
+-        const qint64 seq = engine->windowRectsSequence();
+-        if (seq != m_windowRectsSequenceSeen) {
+-            m_windowRectsSequenceSeen = seq;
+-            const QVariantList rects = engine->windowRects();
+-            for (int i = 0; i < MAX_WINDOWS * 4; ++i) {
+-                m_windowRectsBase[i] = (i < rects.size()) ? rects[i].toFloat() : 0.0f;
+-            }
+-            const QVariantList velocities = engine->windowVelocities();
+-            for (int i = 0; i < MAX_WINDOWS * 2; ++i) {
+-                m_windowVelocities[i] = (i < velocities.size()) ? velocities[i].toFloat() : 0.0f;
+-            }
+-            m_windowRectsBaseTimer.restart();
+-        }
+-
+-        // Time since last poll, capped to ~80 ms so dropped polls don't
+-        // let a window's wake drift away from where the window actually is.
+-        float ageSec = 0.0f;
+-        if (m_windowRectsBaseTimer.isValid()) {
+-            ageSec = std::min(0.08f, float(m_windowRectsBaseTimer.elapsed()) / 1000.0f);
+-        }
+-
+-        for (int i = 0; i < MAX_WINDOWS; ++i) {
+-            m_windowRects[i * 4 + 0] = m_windowRectsBase[i * 4 + 0]
+-                                     + m_windowVelocities[i * 2 + 0] * ageSec;
+-            m_windowRects[i * 4 + 1] = m_windowRectsBase[i * 4 + 1]
+-                                     + m_windowVelocities[i * 2 + 1] * ageSec;
+-            m_windowRects[i * 4 + 2] = m_windowRectsBase[i * 4 + 2];
+-            m_windowRects[i * 4 + 3] = m_windowRectsBase[i * 4 + 3];
+-        }
+-    }
+-
+-    // Mirror experimental screen/desktop state into the renderer
+-    // so renderMainPass / renderBuffer can plug them in as uniforms.
+-    m_screenOffset        = engine->screenOffset();
+-    m_screenIndex         = engine->screenIndex();
+-    m_screenCount         = engine->screenCount();
+-    m_virtualDesktop      = engine->virtualDesktop();
+-    m_virtualDesktopCount = engine->virtualDesktopCount();
+-    m_virtualDesktopAnim  = engine->virtualDesktopAnim();
+ }
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -13,6 +13,9 @@
+     core/shadercompiler.cpp
+     core/uniformmanager.cpp
+     core/performancemonitor.cpp
++    rain/dropletsimulation.cpp
++    rain/rainfieldrenderer.cpp
++    rain/raininput.cpp
+     
+     # Input
+     input/cursortracker.cpp
+@@ -42,6 +45,9 @@
+     core/shadercompiler.h
+     core/uniformmanager.h
+     core/performancemonitor.h
++    rain/dropletsimulation.h
++    rain/rainfieldrenderer.h
++    rain/raininput.h
+     
+     # Input
+     input/cursortracker.h
+--- a/package/contents/ui/ShaderSystem.qml
++++ b/package/contents/ui/ShaderSystem.qml
+@@ -15,17 +15,24 @@
+     clip: true  // ShaderEngine overscans during parallax — clip to screen
+ 
+     // ────────────────────────────────────────────────────────────────────────
+-    // Host plumbing (set by main.qml Loader.onLoaded).
++    // Host plumbing (bound by main.qml).
+     //
+     // wallpaperConfig — KConfigPropertyMap from whichever host loaded us.
+-    // lockScreenMode / loginScreenMode — restrict inputs on non-desktop
+-    // surfaces (kscreenlocker greeter, PLM login greeter).
++    // inputHost is null until attached and classified, then carries window and roles.
+     // ────────────────────────────────────────────────────────────────────────
+     property var  wallpaperConfig: null
+-    property bool lockScreenMode: false
+-    property bool loginScreenMode: false
++    property var inputHost: null
++    readonly property bool lockScreenMode: inputHost ? inputHost.lockScreenMode : false
++    readonly property bool loginScreenMode: inputHost ? inputHost.loginScreenMode : false
+     readonly property bool restrictedMode: lockScreenMode || loginScreenMode
+-    readonly property bool _allowMouse:   !restrictedMode && (wallpaperConfig ? (wallpaperConfig.mouseEnabled || false) : false)
++    // Read one snapshot, not separately propagated readiness/role bindings.
++    readonly property bool _desktopInputHost: inputHost !== null
++        && inputHost.window === shaderSystem.Window.window
++        && !inputHost.lockScreenMode && !inputHost.loginScreenMode
++    readonly property bool _allowMouse: inputHost !== null
++        && inputHost.window === shaderSystem.Window.window && !inputHost.loginScreenMode
++        && (!inputHost.lockScreenMode || (shaderEngine.rainActive && shaderEngine.rainLockScreenHost === true))
++        && (wallpaperConfig ? (wallpaperConfig.mouseEnabled || false) : false)
+     readonly property bool _allowAudio:   !restrictedMode && (wallpaperConfig ? (wallpaperConfig.audioEnabled || false) : false)
+     readonly property bool _allowWindows: !restrictedMode && (wallpaperConfig ? (wallpaperConfig.windowsEnabled || false) : false)
+     readonly property bool _allowExperimentalDesktop: !restrictedMode && (wallpaperConfig ? (wallpaperConfig.experimentalDesktopUniform || false) : false)
+@@ -33,6 +40,17 @@
+     readonly property bool _allowExperimentalScreens:  !restrictedMode && (wallpaperConfig ? (wallpaperConfig.experimentalScreenUniforms || false) : false)
+     readonly property bool _allowWatchSource: !restrictedMode && (wallpaperConfig ? (wallpaperConfig.watchSourceFile || false) : false)
+ 
++    // An already-running desktop may still have the preceding native module cached.
++    // Host identity comes only from the loader role, never from saved configuration.
++    Binding {
++        target: typeof shaderEngine.rainLockScreenHost !== "undefined" ? shaderEngine : null
++        property: "rainLockScreenHost"
++        value: shaderSystem.inputHost !== null
++            && shaderSystem.inputHost.window === shaderSystem.Window.window
++            && shaderSystem.inputHost.lockScreenMode && !shaderSystem.inputHost.loginScreenMode
++        when: target !== null
++    }
++
+     // Window model for pause detection
+     WindowModel {
+         id: windowModel
+@@ -47,7 +65,7 @@
+     // with different heights would put the impulse off-cursor).
+     CursorTracker {
+         id: cursorTracker
+-        enabled: shaderSystem._allowMouse && shaderEngine.running
++        enabled: shaderSystem._desktopInputHost && shaderSystem._allowMouse && shaderEngine.running && !shaderEngine.rainActive
+         sensitivity: (wallpaperConfig && wallpaperConfig.mouseBias) || 1.0
+         screen: shaderSystem.Window.window ? shaderSystem.Window.window.screen : null
+         // Same pixel space as fragCoord / iResolution (ShaderEngine FBO).
+@@ -58,7 +76,7 @@
+                             : 1.0
+ 
+         onIMouseChanged: {
+-            shaderEngine.iMouse = iMouse
++            if (shaderSystem._desktopInputHost && !shaderEngine.rainActive) shaderEngine.iMouse = iMouse
+         }
+     }
+ 
+@@ -241,7 +259,7 @@
+             : 0
+         hdrPipeline: (wallpaperConfig && wallpaperConfig.experimentalHdrPipeline) || false
+ 
+-        // Mouse input — disabled in lock-screen mode.
++        // Mouse input requires a classified host; lockers permit only native Rain.
+         mouseEnabled: shaderSystem._allowMouse
+         mouseBias: (wallpaperConfig && wallpaperConfig.mouseBias) || 1.0
+ 
+@@ -350,29 +368,29 @@
+     MouseArea {
+         id: mouseArea
+         anchors.fill: parent
+-        enabled: !shaderSystem.restrictedMode
++        enabled: shaderSystem._desktopInputHost && !shaderEngine.rainActive
+         visible: enabled
+-        hoverEnabled: shaderSystem._allowMouse
++        hoverEnabled: shaderSystem._desktopInputHost && shaderSystem._allowMouse && !shaderEngine.rainActive
+         propagateComposedEvents: true
+         preventStealing: false
+ 
+         onPositionChanged: (mouse) => {
+             mouse.accepted = false
+-            if (shaderSystem._allowMouse) {
++            if (shaderSystem._desktopInputHost && shaderSystem._allowMouse && !shaderEngine.rainActive) {
+                 cursorTracker.updatePosition(mouseX, mouseY)
+             }
+         }
+ 
+         onPressed: (mouse) => {
+             mouse.accepted = false
+-            if (shaderSystem._allowMouse) {
++            if (shaderSystem._desktopInputHost && shaderSystem._allowMouse && !shaderEngine.rainActive) {
+                 cursorTracker.updateClick(mouseX, mouseY, true)
+             }
+         }
+ 
+         onReleased: (mouse) => {
+             mouse.accepted = false
+-            if (shaderSystem._allowMouse) {
++            if (shaderSystem._desktopInputHost && shaderSystem._allowMouse && !shaderEngine.rainActive) {
+                 cursorTracker.updatePressed(false)
+             }
+         }
+@@ -572,4 +590,3 @@
+         }
+     }
+ }
+-
+--- a/package/contents/ui/main.qml
++++ b/package/contents/ui/main.qml
+@@ -51,8 +51,9 @@
+     // Detection: inspect the host QQuickView's `source` URL (same trick as
+     // Smart Video Wallpaper Reborn and other dual-mode plugins).
+     // ────────────────────────────────────────────────────────────────────────
+-    property bool lockScreenMode: false
+-    property bool loginScreenMode: false
++    property var inputHost: null
++    readonly property bool lockScreenMode: inputHost ? inputHost.lockScreenMode : false
++    readonly property bool loginScreenMode: inputHost ? inputHost.loginScreenMode : false
+ 
+     // Authoritative config map for ShaderSystem — works in all three hosts.
+     readonly property var effectiveConfiguration: {
+@@ -61,24 +62,33 @@
+         return configuration
+     }
+ 
+-    Item {
+-        anchors.fill: parent
+-        onWindowChanged: function(window) {
+-            if (!window) return
+-            const src = ("source" in window) ? window.source.toString() : ""
+-            main.lockScreenMode = src.endsWith("LockScreen.qml")
+-            // PLM's wallpaper service hosts us inside
+-            // qrc:/…/org/kde/plasma/login/wallpaper/main.qml
+-            main.loginScreenMode = src.indexOf("plasma/login/wallpaper") >= 0
+-            if (main.lockScreenMode) {
+-                console.log("Shader Wallpaper: lock-screen mode")
+-            } else if (main.loginScreenMode) {
+-                console.log("Shader Wallpaper: PLM login-screen mode")
+-            }
++    function updateInputHost() {
++        // Revoke first, even for same-window reparenting, to cancel pending input.
++        inputHost = null
++        const window = main.Window.window
++        if (!main.parent || !window || main.parent.Window.window !== window) return
++        const src = ("source" in window) ? window.source.toString() : ""
++        const lock = src.endsWith("LockScreen.qml")
++        const login = src.indexOf("plasma/login/wallpaper") >= 0
++        if (!lock && !login && !src.endsWith("Desktop.qml")) return
++        // Publish attachment and both roles together; configuration may arrive earlier.
++        inputHost = { window: window, lockScreenMode: lock, loginScreenMode: login }
++        if (loginScreenMode) {
++            console.log("Shader Wallpaper: PLM login-screen mode")
++        } else if (lockScreenMode) {
++            console.log("Shader Wallpaper: lock-screen mode")
+         }
+     }
++    onParentChanged: updateInputHost()
++    Window.onWindowChanged: updateInputHost()
++    Connections {
++        target: main.Window.window
++        ignoreUnknownSignals: true
++        function onSourceChanged() { main.updateInputHost() }
++    }
+ 
+     Component.onCompleted: {
++        updateInputHost()
+         if (pluginAvailable) {
+             console.log("Shader Wallpaper: Plugin found!")
+             pluginLoader.active = true
+@@ -183,14 +193,8 @@
+     }
+     Binding {
+         target: pluginLoader.item
+-        property: "lockScreenMode"
+-        value: main.lockScreenMode
+-        when: pluginLoader.item
+-    }
+-    Binding {
+-        target: pluginLoader.item
+-        property: "loginScreenMode"
+-        value: main.loginScreenMode
++        property: "inputHost"
++        value: main.inputHost
+         when: pluginLoader.item
+     }
+ }
