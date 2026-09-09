@@ -18,6 +18,11 @@ struct DropletSimulationTestAccess {
     static void placeProbe(DropletSimulation &simulation, double x) {
         simulation.drops_ = {{1, {x, 120}, {x, 120}, {}, 64}};
     }
+    static void placeSplashProbes(DropletSimulation &simulation) {
+        simulation.reset(320, 240, 1, 0);
+        simulation.drops_ = {{1, {80, 120}, {80, 120}, {}, 4096}, {2, {240, 120}, {240, 120}, {}, 4096}};
+        simulation.nextId_ = 3;
+    }
 };
 }
 
@@ -330,6 +335,71 @@ private Q_SLOTS:
         QTest::newRow("fast-4") << 4. << 33 << 180 << false;
         QTest::newRow("wall-clamp") << .75 << 160 << 15 << false;
         QTest::newRow("physics-clamp") << 4. << 160 << 15 << false;
+    }
+
+    void desktopClicksReachPhysicsOnceAndCancelAcrossSynchronization() {
+        QQuickWindow window;
+        window.resize(320, 240);
+        ShaderEngine engine(window.contentItem());
+        engine.setFlag(QQuickItem::ItemHasContents, false);
+        engine.setSize({320, 240});
+        engine.setMouseEnabled(true);
+        engine.setShaderCode(rain());
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QVERIFY(context.makeCurrent(&surface));
+        ShaderEngineRenderer renderer;
+        renderer.synchronize(&engine);
+        QCoreApplication::processEvents();
+        QVERIFY(engine.m_rainInput);
+        auto &input = *engine.m_rainInput;
+        QVERIFY(QMetaObject::invokeMethod(&input, "sessionLockChanged", Q_ARG(bool, false)));
+        auto &simulation = *renderer.m_rainSimulation;
+        const auto click = [&](QPointF p) {
+            QMouseEvent press(QEvent::MouseButtonPress, p, p, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(&window, &press);
+            QMouseEvent release(QEvent::MouseButtonRelease, p, p, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(&window, &release);
+        };
+        arasaka::rain::DropletSimulationTestAccess::placeSplashProbes(simulation);
+        click({80, 120});
+        click({240, 120});
+        renderer.synchronize(&engine);
+        QVERIFY(!renderer.m_rainPointer.valid); // Release must not erase a separately queued click.
+        simulation.advance(0);
+        QCOMPARE(simulation.drops().size(), std::size_t(2));
+        renderer.synchronize(&engine); // A second sync before the fixed tick must retain both clicks.
+        simulation.advance(1.0 / 120);
+        QVERIFY2(simulation.drops().size() >= 6, "both fast desktop clicks must split their drops");
+        auto control = simulation;
+        renderer.synchronize(&engine);
+        simulation.advance(1.0 / 30);
+        control.advance(1.0 / 30);
+        QCOMPARE(simulation.drops().size(), control.drops().size());
+        for (std::size_t i = 0; i < control.drops().size(); ++i) {
+            QCOMPARE(simulation.drops()[i].position, control.drops()[i].position);
+            QCOMPARE(simulation.drops()[i].volume, control.drops()[i].volume);
+        }
+        for (bool transferred : {false, true}) {
+            for (const auto property : {"running", "mouseEnabled", "speed", "rainLockScreenHost"}) {
+                arasaka::rain::DropletSimulationTestAccess::placeSplashProbes(simulation);
+                input.invalidate();
+                renderer.synchronize(&engine);
+                click({80, 120});
+                if (transferred) renderer.synchronize(&engine);
+                const auto original = engine.property(property);
+                QVERIFY(engine.setProperty(property, QByteArray(property) == "rainLockScreenHost" ? 1 : 0));
+                QVERIFY(engine.setProperty(property, original));
+                renderer.synchronize(&engine);
+                simulation.advance(1.0 / 30);
+                QCOMPARE(simulation.drops().size(), std::size_t(2));
+            }
+        }
+        engine.setRainLockScreenHost(true);
+        click({80, 120});
+        renderer.synchronize(&engine);
+        simulation.advance(1.0 / 30);
+        QCOMPARE(simulation.drops().size(), std::size_t(2));
     }
 
     void sustainedPointerUsesActiveClock() {
@@ -789,6 +859,84 @@ private Q_SLOTS:
             QVERIFY(QTest::qWaitForWindowExposed(&window));
             QTRY_VERIFY(checked >= 3);
             QVERIFY(stable);
+        }
+        QVERIFY(context.makeCurrent(&surface));
+    }
+
+    void qtClickSplashesInRenderedFramesAtThirtyFps() {
+        class InspectingRenderer : public ShaderEngineRenderer {
+        public:
+            std::function<void(ShaderEngineRenderer *)> inspect;
+            void render() override {
+                ShaderEngineRenderer::render();
+                inspect(this);
+            }
+        };
+        class Engine : public ShaderEngine {
+        public:
+            using ShaderEngine::ShaderEngine;
+            std::function<void(ShaderEngineRenderer *)> inspect;
+            Renderer *createRenderer() const override {
+                auto *renderer = new InspectingRenderer;
+                renderer->inspect = inspect;
+                return renderer;
+            }
+        };
+        {
+            QQuickWindow window;
+            window.resize(320, 240);
+            Engine engine(window.contentItem());
+            engine.setSize({320, 240});
+            engine.setMouseEnabled(true);
+            engine.setTargetFps(30);
+            engine.setSpeed(.75);
+            engine.setShaderCode(QStringLiteral("// @arasaka-effect rain-v1\n"
+                "uniform sampler2D iRainField;\n"
+                "void mainImage(out vec4 c, in vec2 p) {"
+                "vec3 f = texture(iRainField, p/iResolution.xy).rgb; c = vec4(f.r/10., f.g, f.b, 1.); }"));
+            bool seeded = false;
+            int frames = 0;
+            std::size_t count = 0;
+            std::vector<arasaka::rain::Drop> displayedDrops;
+            engine.inspect = [&](ShaderEngineRenderer *renderer) {
+                if (!renderer->m_rainSimulation) return;
+                if (!seeded) {
+                    arasaka::rain::DropletSimulationTestAccess::placeSplashProbes(*renderer->m_rainSimulation);
+                    seeded = true;
+                }
+                count = renderer->m_rainSimulation->drops().size();
+                displayedDrops = renderer->m_rainSimulation->drops();
+                ++frames;
+            };
+            window.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&window));
+            QTRY_VERIFY(engine.m_rainInput && frames >= 3);
+            QVERIFY(QMetaObject::invokeMethod(engine.m_rainInput.get(), "sessionLockChanged", Q_ARG(bool, false)));
+            const QImage before = window.grabWindow();
+            const qreal dpr = window.devicePixelRatio();
+            QVERIFY(before.pixelColor(qRound(80*dpr), qRound(120*dpr)).redF() > .7);
+            QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, {80, 120});
+            QTRY_VERIFY_WITH_TIMEOUT(count >= 4, 2000);
+            const int splitFrame = frames;
+            QTRY_VERIFY_WITH_TIMEOUT(frames >= splitFrame + 3, 2000);
+            QVERIFY(count >= 4); // Siblings remain visible over several actual 30 FPS frames.
+            const QImage after = window.grabWindow();
+            QVERIFY(after.pixelColor(qRound(80*dpr), qRound(120*dpr)).redF() < .1);
+            int visibleFragments = 0;
+            for (const auto &d : displayedDrops) {
+                if (d.id <= 2) continue;
+                const auto pixel = after.pixelColor(qRound(d.position.x*dpr), qRound(d.position.y*dpr));
+                QVERIFY2(pixel.redF() > .1, "each physical fragment must appear as a rendered cap");
+                ++visibleFragments;
+            }
+            QVERIFY(visibleFragments >= 3);
+            QVERIFY(before != after);
+            engine.setRunning(false);
+            QTest::qWait(100);
+            const QImage paused = window.grabWindow();
+            QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, {240, 120});
+            QTest::qWait(100);
+            QCOMPARE(window.grabWindow(), paused);
         }
         QVERIFY(context.makeCurrent(&surface));
     }

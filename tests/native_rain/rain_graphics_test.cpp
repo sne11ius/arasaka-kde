@@ -247,6 +247,79 @@ private Q_SLOTS:
         move(second, {30, 30});
         QVERIFY(input.snapshot().valid);
     }
+
+    void quickClicksAreLocalOneShotAndPassive() {
+        class Window : public QQuickWindow {
+        public:
+            int presses = 0, releases = 0;
+            void mousePressEvent(QMouseEvent *event) override { ++presses; event->accept(); }
+            void mouseReleaseEvent(QMouseEvent *event) override { ++releases; event->accept(); }
+        } window, other;
+        window.resize(400, 300);
+        QQuickItem item(window.contentItem());
+        item.setPosition({10, 20});
+        item.setSize({160, 120});
+        item.setScale(2);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        RainInput input(&item);
+        input.setEnabled(true);
+        QVERIFY(QMetaObject::invokeMethod(&input, "sessionLockChanged", Q_ARG(bool, false)));
+        const auto click = [&](QQuickWindow &target, QPointF local, Qt::MouseButton button = Qt::LeftButton) {
+            const auto p = item.mapToScene(local);
+            QMouseEvent press(QEvent::MouseButtonPress, p, p, button, button, Qt::NoModifier);
+            QCoreApplication::sendEvent(&target, &press);
+            move(target, p, button); // A held button must neither repeat nor cancel an accepted press.
+            QMouseEvent release(QEvent::MouseButtonRelease, p, p, button, Qt::NoButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(&target, &release);
+        };
+        click(window, {30, 25});
+        click(window, {45, 35});
+        QCOMPARE(window.presses, 2);
+        QCOMPARE(window.releases, 2);
+        QVERIFY(!input.snapshot().valid);
+        const auto splashes = input.takeSplashes();
+        QCOMPARE(splashes.size(), std::size_t(2));
+        QCOMPARE(splashes[0], (Vec2{30, 25}));
+        QCOMPARE(splashes[1], (Vec2{45, 35}));
+        QVERIFY(input.takeSplashes().empty());
+        click(other, {30, 25});
+        click(window, {30, 25}, Qt::RightButton);
+        click(window, {30, 25}, Qt::MiddleButton);
+        click(window, {-1, 25});
+        QVERIFY(input.takeSplashes().empty());
+
+        QTest::mouseDClick(&window, Qt::LeftButton, Qt::NoModifier, {70, 70}, 1);
+        QCOMPARE(input.takeSplashes().size(), std::size_t(2)); // Two physical presses, regardless of Qt's extra notification.
+        for (int i = 0; i < 100; ++i) click(window, {30, 25});
+        const auto burst = input.takeSplashes();
+        QVERIFY(!burst.empty() && burst.size() <= 32);
+
+        for (int cancel = 0; cancel < 7; ++cancel) {
+            click(window, {30, 25});
+            if (cancel == 0) { input.setEnabled(false); input.setEnabled(true); }
+            if (cancel == 1) { input.setLockScreenHost(true); input.setLockScreenHost(false); }
+            if (cancel == 2) {
+                QVERIFY(QMetaObject::invokeMethod(&input, "sessionLockChanged", Q_ARG(bool, true)));
+                QVERIFY(QMetaObject::invokeMethod(&input, "sessionLockChanged", Q_ARG(bool, false)));
+            }
+            if (cancel == 3) { item.setX(item.x() + 1); input.refreshGeometry(); }
+            if (cancel == 4) { QEvent leave(QEvent::Leave); QCoreApplication::sendEvent(&window, &leave); }
+            if (cancel == 5) { item.setVisible(false); item.setVisible(true); }
+            if (cancel == 6) { item.setParentItem(other.contentItem()); item.setParentItem(window.contentItem()); }
+            QVERIFY2(input.takeSplashes().empty(), "host/lifecycle changes must discard unconsumed clicks");
+        }
+        input.setLockScreenHost(true);
+        click(window, {30, 25});
+        QVERIFY(input.takeSplashes().empty());
+        input.setLockScreenHost(false);
+        QVERIFY(QMetaObject::invokeMethod(&input, "sessionLockChanged", Q_ARG(bool, true)));
+        click(window, {30, 25});
+        QVERIFY(input.takeSplashes().empty());
+        input.setLockScreenHost(true);
+        click(window, {30, 25});
+        QVERIFY(input.takeSplashes().empty());
+    }
 };
 
 QTEST_MAIN(RainGraphicsTest)

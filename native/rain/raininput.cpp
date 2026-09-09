@@ -9,6 +9,7 @@
 #include <QMouseEvent>
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace arasaka::rain {
 
@@ -80,8 +81,20 @@ void RainInput::setEnabled(bool enabled)
 
 void RainInput::invalidate()
 {
+    invalidateHover();
+    splashes_.clear();
+    ++splashCancellationSequence_;
+}
+
+void RainInput::invalidateHover()
+{
     pointer_.valid = false;
     ++invalidationSequence_;
+}
+
+std::vector<Vec2> RainInput::takeSplashes()
+{
+    return std::exchange(splashes_, {});
 }
 
 void RainInput::setLockScreenHost(bool lockScreenHost)
@@ -131,7 +144,7 @@ bool RainInput::eventFilter(QObject *watched, QEvent *event)
         auto *mouse = static_cast<QMouseEvent *>(event);
         // Only the explicit locker host may observe its own window while locked.
         if (!enabled_ || (locked_ && !lockScreenHost_) || !item_->isVisible() || !item_->isEnabled()
-            || !window_->isVisible() || mouse->buttons() != Qt::NoButton) {
+            || !window_->isVisible()) {
             invalidate();
             break;
         }
@@ -140,17 +153,40 @@ bool RainInput::eventFilter(QObject *watched, QEvent *event)
             invalidate();
             break;
         }
+        if (mouse->buttons() != Qt::NoButton) {
+            invalidateHover();
+            break;
+        }
         pointer_ = {{p.x(), p.y()}, true, pointer_.sequence + 1, clock_.nsecsElapsed() / 1e9};
         break;
     }
+    case QEvent::MouseButtonPress: {
+        refreshGeometry();
+        invalidateHover();
+        auto *mouse = static_cast<QMouseEvent *>(event);
+        // At the window filter Qt sends both the second press and an extra DblClick.
+        // Count presses only, while leaving both notifications available to the desktop.
+        if (!enabled_ || locked_ || lockScreenHost_ || !item_->isVisible() || !item_->isEnabled()
+            || !window_->isVisible() || mouse->button() != Qt::LeftButton
+            || mouse->buttons() != Qt::LeftButton || mouse->modifiers() != Qt::NoModifier)
+            break;
+        const auto p = item_->mapFromScene(mouse->position());
+        if (!std::isfinite(p.x()) || !std::isfinite(p.y()) || !item_->contains(p)) {
+            invalidate();
+            break;
+        }
+        if (splashes_.size() < 32) splashes_.push_back({p.x(), p.y()});
+        break;
+    }
+    case QEvent::MouseButtonRelease:
+        invalidateHover(); // A release between frames must not erase the preceding splash.
+        break;
     case QEvent::Leave:
     case QEvent::Hide:
     case QEvent::Close:
     case QEvent::WindowDeactivate:
     case QEvent::UngrabMouse:
     case QEvent::TouchCancel:
-    case QEvent::MouseButtonPress:
-    case QEvent::MouseButtonRelease:
     case QEvent::DevicePixelRatioChange:
         invalidate();
         break;

@@ -501,7 +501,16 @@ selects TV Glitch again. Window and popup durations are set in
 The managed desktop default is **Interactive Rain**: native simulated droplets
 fall, merge, refract the Arasaka/Mikoshi artwork, and leave trails through fog.
 Move the pointer over exposed desktop space to influence nearby drops with passive
-hover; no clicking or dragging is needed, and desktop clicks remain available.
+hover. **Left-click a drop to splash it:** a small fingertip margin makes targeting
+forgiving, and the nearest cap breaks into roughly 3–8 uneven droplets that scatter
+outward, refract the artwork, and leave wet trails. Fragments conserve the original
+water and inherited momentum, merge into drops they hit, and push them into motion.
+Friction slows the spray and gravity pulls larger drops downward. Each press makes
+one burst, including the second press of a double-click; holding does not repeat it.
+Clicks on clear glass do nothing. Very small drops, cramped edges, and scenes at the
+1,024-drop limit receive a nudge; limited remaining capacity produces fewer fragments.
+Desktop clicks continue through to Plasma normally. Splashes use unmodified left
+presses on the desktop; the lock screen retains its passive hover interaction.
 It adapts BigWings' Heartfelt through
 [kde-shader-wallpaper](https://github.com/y4my4my4m/kde-shader-wallpaper).
 **Heartfelt No Heart remains a separate gallery effect and the unchanged PLM/login
@@ -516,12 +525,13 @@ windows, even under fog. The emblem, grid, and scanlines remain; application and
 window palettes are unchanged.
 Managed desktop activation targets 30 FPS, full resolution, 75% shader playback
 speed, and pauses for maximized/fullscreen windows on each respective screen.
-Mouse input is explicitly enabled for hover; audio capture, window-reactive shader
-input, playlists, and generic A-D buffer passes remain disabled. Only texture
-channel 0 is enabled. The native rain field is independent of those buffer passes.
+Mouse input is explicitly enabled for hover and desktop splashes; audio capture,
+window-reactive shader input, playlists, and generic A-D buffer passes remain
+disabled. Only texture channel 0 is enabled. The native rain field is independent
+of those buffer passes.
 Selecting Interactive Rain from the gallery does not enable mouse input: with
-mouse disabled, physical rainfall continues without pointer forces until you enable
-the existing mouse setting. No new settings UI is required.
+mouse disabled, physical rainfall continues without hover forces or click splashes
+until you enable the existing mouse setting. No new settings UI is required.
 
 This is the only managed desktop wallpaper implementation. `apply-live` calls
 `apply-shader-wallpaper` once to build, back up, install, and activate the same
@@ -761,9 +771,15 @@ Renderer testing observed animated opaque/nonblack artwork, paused frame stabili
 selection failure preservation, and HiDPI behavior in isolated windows, with native
 field/input checks on hardware and software GL. These are correctness observations,
 not a GPU/frame-time benchmark or proof of live Folder View hover delivery.
-**30 FPS is the configured target, not a measured live guarantee.** Interactive Rain
-rollout, physical multi-monitor delivery and live frame times still require desktop
-acceptance checks; no automatic Plasma restart or deployment is part of these tests.
+The native tests also exercise real Qt clicks at 30 FPS and 75% speed, rendered
+fragment separation, fast press/release delivery, passive button forwarding, and
+pending-click cancellation across pause, input permission, and host changes.
+The click-splash update was installed on 2026-09-10. After a user-approved Plasma
+restart, the shell loaded the new native module and compiled Interactive Rain on
+both active displays; the user confirmed the desktop interaction and appearance.
+**30 FPS is the configured target, not a measured live guarantee.** Physical
+multi-monitor input coverage and live frame times still need dedicated checks;
+no automatic Plasma restart or deployment is part of these tests.
 
 After packaging, the read-only gallery test uses the installed/staged package's
 actual selection function. Pass paths to its package and external no-heart shader;

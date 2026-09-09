@@ -24,6 +24,9 @@ public:
     // Map new source samples onto the host's admitted active timeline; held samples stay unchanged.
     PointerSnapshot synchronize(double activeSeconds);
     std::uint64_t invalidationSequence() const { return invalidationSequence_; }
+    // Drain once during render synchronization; quick press/release pairs remain distinct.
+    std::vector<Vec2> takeSplashes();
+    std::uint64_t splashCancellationSequence() const { return splashCancellationSequence_; }
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -34,6 +37,7 @@ private Q_SLOTS:
 private:
     void trackWindow(QQuickWindow *window);
     void querySessionLock();
+    void invalidateHover();
     QQuickItem *item_;
     QPointer<QQuickWindow> window_;
     QElapsedTimer clock_;
@@ -46,6 +50,8 @@ private:
     bool lockScreenHost_ = false;
     bool locked_ = true;
     std::uint64_t invalidationSequence_ = 0, lockRevision_ = 0;
+    std::uint64_t splashCancellationSequence_ = 0;
+    std::vector<Vec2> splashes_;
 };
 
 } // namespace arasaka::rain

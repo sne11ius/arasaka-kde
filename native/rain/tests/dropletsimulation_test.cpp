@@ -34,6 +34,11 @@ struct DropletSimulationTestAccess {
     {
         simulation.drops_ = std::move(drops);
     }
+
+    static void splash(DropletSimulation &simulation, Vec2 position)
+    {
+        simulation.splash(position);
+    }
 };
 
 } // namespace arasaka::rain
@@ -71,6 +76,186 @@ void samePhysicalState(const DropletSimulation &a, const DropletSimulation &b)
         near(x.velocity.x, y.velocity.x, "vx differs");
         near(x.velocity.y, y.velocity.y, "vy differs");
         near(x.volume, y.volume, "volume differs");
+    }
+}
+
+void splashConservesWaterAndInheritedMomentum()
+{
+    DropletSimulation simulation;
+    DropletSimulationTestAccess::setDrops(simulation, {drop(1, {500, 500}, 12, {35, 20})});
+    DropletSimulationTestAccess::splash(simulation, {500, 500});
+    require(simulation.drops().size() >= 3 && simulation.drops().size() <= 8,
+            "a clicked large drop must become several physical droplets");
+    double volume = 0, px = 0, py = 0, cx = 0, cy = 0;
+    bool left = false, right = false, up = false, down = false;
+    double smallest = 1728, largest = 0;
+    for (const auto &d : simulation.drops()) {
+        require(d.id > 1 && d.volume > 0 && d.volume < 1728, "fragments have fresh identities and less water");
+        require(d.previousPosition == d.position, "fragment birth must not invent a swept collision/trail from the parent");
+        const Vec2 offset{d.position.x - 500, d.position.y - 500};
+        const Vec2 kick{d.velocity.x - 35, d.velocity.y - 20};
+        require(offset.x * kick.x + offset.y * kick.y > 0, "every fragment initially travels outward");
+        left |= kick.x < -30; right |= kick.x > 30; up |= kick.y < -30; down |= kick.y > 30;
+        volume += d.volume;
+        px += d.volume * d.velocity.x; py += d.volume * d.velocity.y;
+        cx += d.volume * d.position.x; cy += d.volume * d.position.y;
+        smallest = std::min(smallest, d.volume); largest = std::max(largest, d.volume);
+        for (const auto &other : simulation.drops()) {
+            if (d.id != other.id)
+                require(std::hypot(d.position.x - other.position.x, d.position.y - other.position.y)
+                            > d.radius() + other.radius(), "siblings must start separated");
+        }
+    }
+    near(volume, 1728, "splitting conserves water");
+    near(px, 60480, "symmetric burst preserves inherited x momentum", 1e-7);
+    near(py, 34560, "symmetric burst preserves inherited y momentum", 1e-7);
+    near(cx / volume, 500, "burst center of mass x");
+    near(cy / volume, 500, "burst center of mass y");
+    require(left && right && up && down, "splash spreads in every direction");
+    require(largest > smallest * 1.05, "fragment sizes have organic variation");
+    for (int i = 0; i < 3; ++i) simulation.advance(1.0 / 30);
+    require(simulation.drops().size() >= 3, "isolated splash must survive long enough to be visible");
+    require(std::all_of(simulation.drops().begin(), simulation.drops().end(), [](const auto &d) {
+        return std::hypot(d.position.x - 500, d.position.y - 500) > 25;
+    }), "fragments visibly spread across several 30 FPS frames");
+}
+
+void splashTargetsOneNearbyDropAndMergesOnImpact()
+{
+    DropletSimulation simulation;
+    DropletSimulationTestAccess::setDrops(simulation, {drop(1, {500, 500}, 8), drop(2, {560, 500}, 8)});
+    auto unchanged = simulation;
+    DropletSimulationTestAccess::splash(simulation, {800, 800});
+    samePhysicalState(simulation, unchanged);
+    DropletSimulationTestAccess::splash(simulation, {500, 518}); // Near the rim, not a pixel-perfect hit.
+    require(simulation.drops().size() > 2, "fingertip margin must admit a near miss");
+    require(std::count_if(simulation.drops().begin(), simulation.drops().end(), [](const auto &d) {
+        return d.id == 2 && d.volume == 512 && d.position == Vec2{560, 500};
+    }) == 1, "only the closest eligible drop splits");
+
+    // Place a real splash fragment just before a smaller resting target in its path.
+    auto fragment = simulation.drops().back();
+    fragment.position = fragment.previousPosition = {800, 800};
+    fragment.velocity = {300, 0};
+    auto target = drop(100, {800 + fragment.radius() + 2.5, 800}, 2);
+    DropletSimulationTestAccess::setDrops(simulation, {fragment, target});
+    simulation.advance(DropletSimulation::fixedStep);
+    require(simulation.drops().size() == 1, "fragment impact merges rather than shattering its target");
+    near(simulation.drops()[0].volume, fragment.volume + 8, "impact retains both drops' water");
+    require(simulation.drops()[0].velocity.x > 100, "the merged target receives the fragment's momentum");
+}
+
+void splashQueueUsesActiveTicksAndCancels()
+{
+    DropletSimulation initial;
+    DropletSimulationTestAccess::setDrops(initial, {drop(1, {500, 500}, 8), drop(2, {900, 900}, 8)});
+    auto simulation = initial;
+    simulation.queueSplash({500, 500});
+    simulation.advance(0);
+    samePhysicalState(simulation, initial);
+    simulation.advance(DropletSimulation::fixedStep / 2);
+    samePhysicalState(simulation, initial);
+    simulation.advance(DropletSimulation::fixedStep / 2);
+    require(simulation.drops().size() > 2, "click survives a fractional frame until the first active tick");
+    auto control = simulation;
+    simulation.advance(1.0 / 30);
+    control.advance(1.0 / 30);
+    samePhysicalState(simulation, control);
+    const auto count = simulation.drops().size();
+    for (int i = 0; i < 5; ++i) simulation.advance(1.0 / 30);
+    require(simulation.drops().size() <= count, "a queued press must not repeat on later frames");
+
+    simulation = initial;
+    simulation.queueSplash({500, 500});
+    simulation.queueSplash({900, 900});
+    simulation.invalidatePointer(); // Release/hover cancellation is independent of accepted clicks.
+    simulation.advance(1.0 / 30);
+    require(std::none_of(simulation.drops().begin(), simulation.drops().end(), [](const auto &d) {
+        return d.id == 1 || d.id == 2;
+    }), "two fast clicks survive hover invalidation and are both consumed");
+
+    for (int cancellation = 0; cancellation < 3; ++cancellation) {
+        simulation = initial;
+        simulation.queueSplash({500, 500});
+        if (cancellation == 0) simulation.cancelSplashes();
+        if (cancellation == 1) simulation.resize(2100, 2000);
+        if (cancellation == 2) simulation.reset(2000, 2000, 1, 0);
+        control = initial;
+        if (cancellation == 1) control.resize(2100, 2000);
+        if (cancellation == 2) control.reset(2000, 2000, 1, 0);
+        simulation.advance(1.0 / 30);
+        control.advance(1.0 / 30);
+        samePhysicalState(simulation, control);
+    }
+}
+
+void splashRespectsCapacityEdgesAndInvalidInput()
+{
+    for (const std::size_t count : {1022, 1023, 1024}) {
+        std::vector<Drop> drops{drop(1, {500, 500}, 8)};
+        for (std::size_t i = 1; i < count; ++i)
+            drops.push_back(drop(i + 1, {1000 + double(i % 32) * 10, 1000 + double(i / 32) * 10}, 1));
+        DropletSimulation simulation;
+        DropletSimulationTestAccess::setDrops(simulation, drops);
+        DropletSimulationTestAccess::splash(simulation, {500, 500});
+        require(simulation.drops().size() <= 1024, "splashes obey the renderer's hard population bound");
+        double volume = 0;
+        for (const auto &d : simulation.drops()) volume += d.volume;
+        near(volume, 512 + count - 1, "capacity pressure cannot discard water or unrelated drops");
+        if (count < 1024) require(simulation.drops().size() > count, "use available room for a smaller burst");
+        else require(std::hypot(simulation.drops()[0].velocity.x, simulation.drops()[0].velocity.y) > 0,
+                     "a full scene still responds with a nudge");
+    }
+    DropletSimulation simulation;
+    DropletSimulationTestAccess::setDrops(simulation, {drop(1, {500, 500}, 8)});
+    auto control = simulation;
+    for (auto point : {Vec2{-1, 500}, Vec2{500, 2001}, Vec2{NAN, 500}, Vec2{500, INFINITY}})
+        simulation.queueSplash(point);
+    simulation.advance(1.0 / 30);
+    control.advance(1.0 / 30);
+    samePhysicalState(simulation, control);
+    for (auto position : {Vec2{0, 0}, Vec2{2000, 2000}, Vec2{500, 500}}) {
+        for (double radius : {0.5, 8.0}) {
+            DropletSimulationTestAccess::setDrops(simulation, {drop(1, position, radius, {899, 0})});
+            DropletSimulationTestAccess::splash(simulation, position);
+            double volume = 0;
+            for (const auto &d : simulation.drops()) {
+                volume += d.volume;
+                require(d.position.x >= 0 && d.position.x <= 2000 && d.position.y >= 0 && d.position.y <= 2000,
+                        "edge splashes cannot place fragments outside the viewport");
+                require(std::hypot(d.velocity.x, d.velocity.y) <= 900 + 1e-9, "inherited velocity plus kick stays bounded");
+            }
+            near(volume, radius * radius * radius, "small and edge drops retain their water");
+        }
+    }
+}
+
+void restingTinyDropNudgeSurvivesAdhesion()
+{
+    for (const double radius : {.5, 1.0}) {
+        DropletSimulation simulation;
+        DropletSimulationTestAccess::setDrops(simulation, {drop(1, {500, 500}, radius)});
+        simulation.queueSplash({500, 500});
+        simulation.advance(1.0 / 30);
+        require(simulation.drops().size() == 1, "an undersized cap receives a nudge rather than subpixel fragments");
+        const auto &d = simulation.drops()[0];
+        near(d.volume, radius * radius * radius, "a tiny nudge preserves water");
+        require(std::hypot(d.position.x - 500, d.position.y - 500) >= 2,
+                "the tiny-drop fallback must visibly displace a resting drop despite adhesion");
+    }
+    for (double radius : {.25, .9}) {
+        DropletSimulation simulation;
+        DropletSimulationTestAccess::setDrops(simulation, {drop(1, {500, 500}, radius)});
+        simulation.resize(320, 60);
+        simulation.resize(1920, 1080); // Resize preserves volume but increases relative adhesion.
+        const auto before = simulation.drops()[0].position;
+        simulation.queueSplash(before);
+        simulation.advance(1.0 / 30);
+        const auto &d = simulation.drops()[0];
+        near(d.volume, radius * radius * radius, "resized nudge preserves the small bead's water");
+        require(std::hypot(d.position.x - before.x, d.position.y - before.y) >= 2,
+                "a resized speck must respond even when adhesion exceeds the bounded launch speed");
+        require(std::hypot(d.velocity.x, d.velocity.y) <= 900, "temporary depinning cannot exceed the speed cap");
     }
 }
 
@@ -892,6 +1077,11 @@ void sustainedDefaultRainWithoutPointer()
 int main()
 {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
+        {"splash water, momentum and visible separation", splashConservesWaterAndInheritedMomentum},
+        {"splash targeting and merging impact", splashTargetsOneNearbyDropAndMergesOnImpact},
+        {"splash active ticks and cancellation", splashQueueUsesActiveTicksAndCancels},
+        {"splash capacity, edges and invalid input", splashRespectsCapacityEdgesAndInvalidInput},
+        {"resting tiny-drop nudge survives adhesion", restingTinyDropNudgeSurvivesAdhesion},
         {"seeded population and cap profile", seededPopulationAndProfile},
         {"pinning, sliding, and persistent frame trails", pinningSlidingAndPersistence},
         {"fixed steps and zero elapsed", fixedStepAndZeroTime},

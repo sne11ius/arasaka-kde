@@ -49,6 +49,10 @@ public:
     void advance(double activeSeconds, const PointerSnapshot &pointer = {});
     // Cancel pending sweeps and require a fresh baseline. Call on pause, leave, or input cancellation.
     void invalidatePointer();
+    // One-shot logical-pixel clicks, consumed at the next active fixed tick (bounded, FIFO).
+    // Hover/button-release cancellation is separate; host/pause/geometry changes cancel both.
+    void queueSplash(Vec2 position);
+    void cancelSplashes() { splashes_.clear(); }
     const std::vector<Drop> &drops() const { return drops_; }
 
 private:
@@ -64,6 +68,7 @@ private:
     double randomUnit();
     void spawn();
     void consumePointer(const PointerSnapshot &pointer);
+    std::uint64_t splash(Vec2 position); // Nudge identity to depin for this tick, or zero for a split/miss.
     void step();
     void mergeCollisions(const std::vector<Vec2> &starts);
 
@@ -83,6 +88,7 @@ private:
     bool hasPointerSequence_ = false;
     bool pointerArmed_ = false;
     std::vector<PointerMotion> pointerMotions_;
+    std::vector<Vec2> splashes_;
 };
 
 } // namespace arasaka::rain

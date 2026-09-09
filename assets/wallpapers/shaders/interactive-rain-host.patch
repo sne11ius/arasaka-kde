@@ -91,7 +91,7 @@
      void ensureBufferFBOs(int bufferIndex);
      void renderBuffer(int bufferIndex);
      void renderMainPass();
-@@ -551,10 +578,21 @@
+@@ -551,10 +578,22 @@
  
      bool m_initialized = false;
      bool m_needsRecompile = false;
@@ -105,6 +105,7 @@
 +    arasaka::rain::PointerSnapshot m_rainPointer;
 +    quint64 m_rainResetRevision = 0;
 +    quint64 m_rainInputInvalidation = 0;
++    quint64 m_rainSplashCancellation = 0;
      
      // Main shader
      std::unique_ptr<QOpenGLShaderProgram> m_shaderProgram;
@@ -113,7 +114,7 @@
      QString m_currentCommonCode;  // Common code to prepend to all shaders
      
      // Buffer shaders and FBOs
-@@ -563,6 +601,10 @@
+@@ -563,6 +602,10 @@
      std::array<std::unique_ptr<QOpenGLFramebufferObject>, 4> m_bufferFBOsBack; // Ping-pong
      std::array<bool, 4> m_useBuffers = {false, false, false, false};
      std::array<QString, 4> m_bufferCodes;
@@ -124,7 +125,7 @@
      // A buffer pass feeds its own previous frame, so its FBO is state, not a
      // scratch surface. ensureBufferFBOs() only clears on CREATION, which means
      // that state used to survive a shader switch: load a new shader and it
-@@ -571,7 +613,7 @@
+@@ -571,7 +614,7 @@
      // shader's own "is this the first frame" test is a comparison, which is
      // false for NaN, so the buffer can never re-seed itself. The result is a
      // permanently black wallpaper that survives switching shaders.
@@ -133,7 +134,7 @@
      std::array<bool, 4> m_bufferNeedsClear = {false, false, false, false};
      
      // Channel textures
-@@ -677,4 +719,3 @@
+@@ -677,4 +720,3 @@
  };
  
  #endif // SHADERENGINE_H
@@ -498,7 +499,7 @@
  }
  
  void ShaderEngineRenderer::ensureLowResFBO()
-@@ -1880,11 +2008,43 @@
+@@ -1880,11 +2008,53 @@
  {
      auto *engine = static_cast<ShaderEngine*>(item);
      m_engineForCallbacks = engine;
@@ -520,9 +521,19 @@
 +        if (m_rainSimulation && (invalidation != m_rainInputInvalidation || !m_rainPointer.valid))
 +            m_rainSimulation->invalidatePointer();
 +        m_rainInputInvalidation = invalidation;
++        const auto cancellation = engine->m_rainInput->splashCancellationSequence();
++        if (m_rainSimulation && cancellation != m_rainSplashCancellation)
++            m_rainSimulation->cancelSplashes();
++        m_rainSplashCancellation = cancellation;
++        for (const auto position : engine->m_rainInput->takeSplashes()) {
++            if (m_rainSimulation) m_rainSimulation->queueSplash(position);
++        }
 +    } else {
 +        m_rainPointer = {};
-+        if (m_rainSimulation) m_rainSimulation->invalidatePointer();
++        if (m_rainSimulation) {
++            m_rainSimulation->invalidatePointer();
++            m_rainSimulation->cancelSplashes();
++        }
 +    }
 +    if (m_rainField && m_rainLogicalSize != m_rainField->logicalSize() && !m_rainLogicalSize.isEmpty()) {
 +        QString error;
@@ -546,7 +557,7 @@
  
      // Pass frame time from previous render back to the engine
      if (m_lastFrameTime > 0.0) {
-@@ -1895,7 +2055,6 @@
+@@ -1895,7 +2065,6 @@
  
      // Pull updated timing/mouse uniforms into the renderer copy.
      m_iTime = engine->iTime();
@@ -554,7 +565,7 @@
      m_iFrameRate = engine->currentFps() > 0
          ? float(engine->currentFps())
          : float(engine->targetFps());
-@@ -1937,6 +2096,73 @@
+@@ -1937,6 +2106,73 @@
      QTime time = now.time();
      float secondsSinceMidnight = time.hour() * 3600.0f + time.minute() * 60.0f + time.second() + time.msec() / 1000.0f;
      m_iDate = QVector4D(date.year(), date.month(), date.day(), secondsSinceMidnight);
@@ -628,7 +639,7 @@
      
      // Check if common code changed - if so, recompile everything
      QString newCommonCode = engine->commonCode();
-@@ -1972,33 +2198,35 @@
+@@ -1972,33 +2208,35 @@
          }
      }
      
@@ -684,7 +695,7 @@
      
      // Compile buffer shaders if changed (or common code changed)
      QString bufferCodes[4] = {
-@@ -2011,13 +2239,11 @@
+@@ -2011,13 +2249,11 @@
      for (int i = 0; i < 4; i++) {
          if (m_useBuffers[i]) {
              if (!bufferCodes[i].isEmpty()) {
@@ -701,7 +712,7 @@
                  }
              } else {
                  static bool warned[4] = {false, false, false, false};
-@@ -2029,6 +2255,9 @@
+@@ -2029,6 +2265,9 @@
          }
      }
      
@@ -711,7 +722,7 @@
      // Debug: log channel mappings
      static bool loggedMappings = false;
      if (!loggedMappings && (m_useBuffers[0] || m_useBuffers[1] || m_useBuffers[2] || m_useBuffers[3])) {
-@@ -2101,70 +2330,4 @@
+@@ -2101,70 +2340,4 @@
              m_bufferChannelMapping[b][c] = bufferChannels[b][c].toInt();
          }
      }

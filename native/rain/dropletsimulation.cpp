@@ -1,7 +1,9 @@
 #include "dropletsimulation.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <numbers>
 #include <numeric>
 #include <unordered_map>
 #include <utility>
@@ -48,6 +50,7 @@ void DropletSimulation::reset(double width, double height, std::uint64_t seed, s
     pointerSequence_ = 0;
     hasPointerSequence_ = false;
     invalidatePointer();
+    cancelSplashes();
     drops_.reserve(targetPopulation_);
     if (sizeActive_) {
         for (std::size_t i = 0; i < targetPopulation_; ++i)
@@ -63,6 +66,7 @@ void DropletSimulation::resize(double width, double height)
     if (sizeActive_ && width == width_ && height == height_)
         return;
     invalidatePointer();
+    cancelSplashes();
     accumulator_ = 0;
     sizeActive_ = width > 0 && height > 0;
     if (!sizeActive_)
@@ -163,6 +167,12 @@ void DropletSimulation::consumePointer(const PointerSnapshot &pointer)
 
 void DropletSimulation::step()
 {
+    std::array<std::uint64_t, 32> nudged{};
+    std::size_t nudgeCount = 0;
+    for (const auto position : splashes_) {
+        if (const auto id = splash(position)) nudged[nudgeCount++] = id;
+    }
+    splashes_.clear();
     std::vector<Vec2> starts;
     starts.reserve(drops_.size());
     // Admit 15% of the mean birth-volume per target cap every 20 active seconds. Slow,
@@ -200,7 +210,10 @@ void DropletSimulation::step()
             drop.velocity.x += motion.impulse.x * influence;
             drop.velocity.y += motion.impulse.y * influence;
         }
-        const double adhesion = 300.0 * std::pow(3.6 * lengthScale_ / radius, 2);
+        // A direct poke releases glass adhesion for its first tick. This also lets
+        // tiny resized beads respond when their adhesion exceeds even the speed cap.
+        const bool depinned = std::find(nudged.begin(), nudged.begin() + nudgeCount, drop.id) != nudged.begin() + nudgeCount;
+        const double adhesion = depinned ? 0 : 300.0 * std::pow(3.6 * lengthScale_ / radius, 2);
         drop.velocity.y += 300.0 * fixedStep;
         const double damping = std::exp(-1.8 * fixedStep);
         drop.velocity.x *= damping;
@@ -246,6 +259,107 @@ void DropletSimulation::invalidatePointer()
     pointerArmed_ = false;
     pointerTime_ = 0;
     pointerMotions_.clear();
+}
+
+void DropletSimulation::queueSplash(Vec2 position)
+{
+    if (sizeActive_ && std::isfinite(position.x) && std::isfinite(position.y)
+        && position.x >= 0 && position.x <= width_ && position.y >= 0 && position.y <= height_
+        && splashes_.size() < 32)
+        splashes_.push_back(position);
+}
+
+std::uint64_t DropletSimulation::splash(Vec2 position)
+{
+    auto hit = drops_.end();
+    double closest = 16; // Fingertip-sized margin beyond the physical cap, in logical pixels.
+    for (auto it = drops_.begin(); it != drops_.end(); ++it) {
+        const double distance = std::max(0.0, std::hypot(it->position.x - position.x, it->position.y - position.y) - it->radius());
+        if (distance < closest) {
+            closest = distance;
+            hit = it;
+        }
+    }
+    if (hit == drops_.end()) return 0;
+    const Drop parent = *hit;
+    const double radius = parent.radius();
+    const auto desired = static_cast<std::size_t>(std::clamp(radius / (1.4 * lengthScale_), 3.0, 8.0));
+    const auto viable = static_cast<std::size_t>(std::clamp(parent.volume / (1.5 * std::pow(.9 * lengthScale_, 3)), 1.0, 8.0));
+    const auto count = std::min({desired, viable, maximumPopulation - drops_.size() + 1});
+    auto nudge = [&]() {
+        Vec2 direction{parent.position.x - position.x, parent.position.y - position.y};
+        if (std::hypot(direction.x, direction.y) < 1e-9) {
+            const double angle = randomUnit() * 2 * std::numbers::pi;
+            direction = {std::cos(angle), std::sin(angle)};
+        }
+        if (parent.position.x < radius) direction.x = std::abs(direction.x);
+        if (parent.position.x > width_ - radius) direction.x = -std::abs(direction.x);
+        if (parent.position.y < radius) direction.y = std::abs(direction.y);
+        if (parent.position.y > height_ - radius) direction.y = -std::abs(direction.y);
+        // Bound the launch while compensating for the bead's stopping force.
+        // step() releases adhesion for the initial tick when a nudge is returned.
+        const double adhesion = 300.0 * std::pow(3.6 * lengthScale_ / radius, 2);
+        const double speed = std::clamp(std::sqrt(8 * adhesion) + adhesion * fixedStep, 120.0, 600.0);
+        const double impulse = speed / std::hypot(direction.x, direction.y);
+        hit->velocity.x += impulse * direction.x;
+        hit->velocity.y += impulse * direction.y;
+        const double divisor = std::max(1.0, std::hypot(hit->velocity.x, hit->velocity.y) / maximumSpeed);
+        hit->velocity.x /= divisor;
+        hit->velocity.y /= divisor;
+        return hit->id;
+    };
+    if (count < 2) return nudge();
+
+    std::array<Drop, 8> fragments;
+    double weights = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        fragments[i].volume = .8 + .4 * randomUnit();
+        weights += fragments[i].volume;
+    }
+    double maxRadius = 0, remaining = parent.volume;
+    for (std::size_t i = 0; i < count; ++i) {
+        auto &d = fragments[i];
+        d.volume = i + 1 == count ? remaining : parent.volume * d.volume / weights;
+        remaining -= d.volume;
+        maxRadius = std::max(maxRadius, d.radius());
+    }
+    // Minimum angular separation is .8 sectors; allow room for the renderer's 1.2x stretch.
+    const double ring = 1.25 * maxRadius / std::sin(.8 * std::numbers::pi / count);
+    const double phase = randomUnit() * 2 * std::numbers::pi;
+    const double speed = std::min(600.0, (180 + 12 * radius / lengthScale_) * std::sqrt(lengthScale_));
+    Vec2 center{}, momentum{};
+    for (std::size_t i = 0; i < count; ++i) {
+        auto &d = fragments[i];
+        const double angle = phase + (i + .2 * (randomUnit() - .5)) * 2 * std::numbers::pi / count;
+        d.position = {ring * std::cos(angle), ring * std::sin(angle)};
+        const double kick = speed * (.85 + .3 * randomUnit());
+        d.velocity = {kick * std::cos(angle), kick * std::sin(angle)};
+        const double share = d.volume / parent.volume;
+        center.x += share * d.position.x; center.y += share * d.position.y;
+        momentum.x += share * d.velocity.x; momentum.y += share * d.velocity.y;
+    }
+    double maximumKick = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        auto &d = fragments[i];
+        d.position = {parent.position.x + d.position.x - center.x, parent.position.y + d.position.y - center.y};
+        // A cramped edge receives a nudge instead of clipping overlapping fragments or losing water.
+        if (d.position.x < 0 || d.position.x > width_ || d.position.y < 0 || d.position.y > height_) {
+            return nudge();
+        }
+        d.velocity.x -= momentum.x; d.velocity.y -= momentum.y;
+        maximumKick = std::max(maximumKick, std::hypot(d.velocity.x, d.velocity.y));
+    }
+    // Scale the entire zero-net-momentum kick, rather than clipping individual fragment velocities.
+    const double kickScale = std::clamp((maximumSpeed - std::hypot(parent.velocity.x, parent.velocity.y)) / maximumKick, 0.0, 1.0);
+    drops_.erase(hit);
+    for (std::size_t i = 0; i < count; ++i) {
+        auto &d = fragments[i];
+        d.id = nextId_++;
+        d.previousPosition = d.position;
+        d.velocity = {parent.velocity.x + kickScale * d.velocity.x, parent.velocity.y + kickScale * d.velocity.y};
+        drops_.push_back(d);
+    }
+    return 0;
 }
 
 void DropletSimulation::mergeCollisions(const std::vector<Vec2> &starts)
