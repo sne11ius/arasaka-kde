@@ -23,7 +23,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Build the test environment
-        run: docker build --tag arasaka-ci .github/ci
+        run: |
+          docker build --build-arg "TEST_UID=$(id -u)" --build-arg "TEST_GID=$(id -g)" \
+            --tag arasaka-ci .github/ci
       - name: Run the suite unprivileged
         run: |
           docker run --rm --user "$(id -u):$(id -g)" \
@@ -42,7 +44,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Build the test environment
-        run: docker build --tag arasaka-ci .github/ci
+        run: |
+          docker build --build-arg "TEST_UID=$(id -u)" --build-arg "TEST_GID=$(id -g)" \
+            --tag arasaka-ci .github/ci
       - name: Measure Python helpers and native physics
         run: |
           docker run --rm --user "$(id -u):$(id -g)" \

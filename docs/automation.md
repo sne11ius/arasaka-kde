@@ -159,7 +159,8 @@ would describe upstream rather than your fork.
 Build the test container once, then use it for the suite, native tests, and coverage:
 
 ```sh
-docker build --tag arasaka-ci .github/ci
+docker build --build-arg "TEST_UID=$(id -u)" --build-arg "TEST_GID=$(id -g)" \
+  --tag arasaka-ci .github/ci
 docker run --rm --user "$(id -u):$(id -g)" \
   --volume "$PWD:/workspace" arasaka-ci make test
 docker run --rm --user "$(id -u):$(id -g)" \

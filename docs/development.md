@@ -46,13 +46,15 @@ mkdir -p /tmp/opencode
 With Docker installed and usable by your normal user:
 
 ```sh
-docker build --tag arasaka-ci .github/ci
+docker build --build-arg "TEST_UID=$(id -u)" --build-arg "TEST_GID=$(id -g)" \
+  --tag arasaka-ci .github/ci
 docker run --rm --user "$(id -u):$(id -g)" \
   --volume "$PWD:/workspace" arasaka-ci make test
 ```
 
 The image pins Debian 13's base digest and supplies the test tools, including Qt 6
-and software OpenGL. Tests run unprivileged. It mounts the checkout, not your live
+and software OpenGL. Build arguments create a matching user/group entry so private
+D-Bus sessions can resolve the unprivileged test user. It mounts the checkout, not your live
 Plasma configuration or session bus. Build outputs stay under ignored `build/`.
 
 ## Test matrix

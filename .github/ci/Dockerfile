@@ -9,9 +9,15 @@ RUN apt-get update \
         python3 python3-coverage python3-pil qt6-base-dev qt6-declarative-dev \
         xauth xvfb \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --uid 1000 builder \
-    && install -d -m 1777 /tmp/opencode /tmp/arasaka-ci-home /workspace \
     && command -v kreadconfig6 kwriteconfig6 rsvg-convert node c++ cmake dbus-run-session
+
+# D-Bus requires a passwd entry for the UID used by docker run. Match the
+# checkout owner on both local machines and GitHub's UID-1001 hosted runner.
+ARG TEST_UID=1000
+ARG TEST_GID=1000
+RUN if ! getent group "$TEST_GID" >/dev/null; then groupadd --gid "$TEST_GID" builder; fi \
+    && useradd --create-home --uid "$TEST_UID" --gid "$TEST_GID" builder \
+    && install -d -m 1777 /tmp/opencode /tmp/arasaka-ci-home /workspace
 
 # The artwork uses Rajdhani. Install its actual font instead of testing a
 # distribution-dependent sans-serif fallback. Keep the upstream OFL in the image.
