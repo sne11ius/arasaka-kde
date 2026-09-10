@@ -4,3 +4,6 @@ build/
 screenshots/
 snapshots/
 /error_20260906_233157.png
+node_modules/
+.lycheecache
+/lychee/

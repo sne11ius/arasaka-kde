@@ -1,0 +1,12 @@
+{
+  "name": "arasaka-kde-docs-checks",
+  "private": true,
+  "description": "Locked tooling for the public Markdown documentation",
+  "license": "EUPL-1.2",
+  "devDependencies": {
+    "markdownlint-cli2": "0.23.2"
+  },
+  "overrides": {
+    "smol-toml": "1.8.0"
+  }
+}

@@ -164,3 +164,17 @@ They remain subject to their individual noncommercial and share-alike conditions
 not the wallpaper engine's GPL license. Complete sources are fetched rather than
 duplicated in this repository; author and license details also appear in the
 installed gallery descriptions and shader headers.
+
+## Documentation and CI tooling
+
+The test container installs **Rajdhani SemiBold** from
+[Google Fonts' Rajdhani sources](https://github.com/google/fonts/tree/9d1ce2fc3c335cca32b6db00c19f55d57b0a68fe/ofl/rajdhani)
+under the **SIL Open Font License 1.1**. The font and its original `OFL.txt` are
+commit- and SHA-256-pinned in `.github/ci/Dockerfile`; the license is retained in
+the image at `/usr/share/doc/arasaka-ci/Rajdhani-OFL.txt`. This supplies the font
+used by the existing artwork during CI rendering; no font binary is vendored here.
+
+GitHub Actions, Codecov, OpenSSF Scorecard, and Shields.io provide the live public
+reports and badge rendering. Markdownlint, Lychee, actionlint, Coverage.py, gcovr,
+Qt, Mesa, and Debian provide the documentation/test tooling. Their own licenses
+remain in effect; see [automation](docs/automation.md) for each service's scope.

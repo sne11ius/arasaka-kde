@@ -1,0 +1,29 @@
+codecov:
+  require_ci_to_pass: true
+  notify:
+    after_n_builds: 2
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        target: auto
+
+flags:
+  python-helpers:
+    paths:
+      - lib/
+    carryforward: false
+  rain-physics:
+    paths:
+      - native/rain/dropletsimulation.cpp
+      - native/rain/dropletsimulation.h
+    carryforward: false
+
+comment:
+  layout: "reach,diff,flags,files"
+  require_changes: true

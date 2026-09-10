@@ -1,0 +1,57 @@
+name: Bug report
+description: Help us reproduce something that went wrong.
+title: "bug: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! For vulnerabilities, please use SECURITY.md instead.
+        Share a short, redacted log rather than personal configuration or backups.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How can we reproduce it?
+      description: Include the exact command or a short sequence of interactions.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected component
+      multiple: true
+      options:
+        - Desktop wallpaper
+        - Session lock screen
+        - PLM login
+        - Launcher or tray
+        - Window tiling or effects
+        - Installation or build
+        - Documentation or CI
+        - Another component
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Distribution, Plasma/KWin, session type, commit, local changes, and GPU/driver if relevant.
+      placeholder: |
+        Distribution:
+        Plasma / KWin:
+        Wayland or X11:
+        Commit and local changes:
+        GPU / driver:
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or visual evidence
+      description: Optional, focused, and redacted. Note whether this is a real host or isolated test.

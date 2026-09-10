@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/sne11ius/arasaka-kde/blob/main/docs/README.md
+    about: Installation, component guides, customization, and recovery.
+  - name: Report a security issue
+    url: https://github.com/sne11ius/arasaka-kde/security/policy
+    about: Please report vulnerabilities privately using the security policy.

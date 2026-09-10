@@ -1,0 +1,74 @@
+name: Repository tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository:
+    name: Repository suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the test environment
+        run: docker build --tag arasaka-ci .github/ci
+      - name: Run the suite unprivileged
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --volume "$PWD:/workspace" arasaka-ci make test
+
+  coverage:
+    name: Core coverage
+    needs: repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the test environment
+        run: docker build --tag arasaka-ci .github/ci
+      - name: Measure Python helpers and native physics
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --volume "$PWD:/workspace" arasaka-ci make coverage
+      - name: Retain coverage reports, including on fork PRs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: core-coverage
+          path: build/coverage/*.xml
+          if-no-files-found: error
+      - name: Publish Python helper coverage
+        if: github.event_name != 'pull_request' && github.repository == 'sne11ius/arasaka-kde'
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          use_oidc: true
+          files: build/coverage/python.xml
+          flags: python-helpers
+          disable_search: true
+          fail_ci_if_error: true
+      - name: Publish native physics coverage
+        if: github.event_name != 'pull_request' && github.repository == 'sne11ius/arasaka-kde'
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          use_oidc: true
+          files: build/coverage/physics.xml
+          flags: rain-physics
+          disable_search: true
+          fail_ci_if_error: true

@@ -1,0 +1,12 @@
+[run]
+branch = True
+parallel = True
+relative_files = True
+source = lib
+data_file = build/coverage/.coverage
+
+[report]
+show_missing = True
+
+[xml]
+output = build/coverage/python.xml

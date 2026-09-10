@@ -1,0 +1,11 @@
+{
+  "globs": ["*.md", "docs/**/*.md", ".github/*.md"],
+  "ignores": ["AGENTS.md", "TODO.md", "docs/superpowers/**"],
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD033": {
+      "allowed_elements": ["p", "img", "a", "details", "summary", "strong", "kbd"]
+    }
+  }
+}

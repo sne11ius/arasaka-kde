@@ -1,0 +1,26 @@
+name: Support question
+description: Ask about installation, usage, customization, or a confusing guide.
+title: "help: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Welcome! The documentation hub is docs/README.md, and SUPPORT.md lists useful diagnostics.
+        You do not need to be a KDE expert to ask a question.
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+      description: Tell us where you got stuck and what you have tried.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Your setup
+      description: Distribution, Plasma version, session type, and source commit if relevant.
+  - type: textarea
+    id: output
+    attributes:
+      label: Relevant output
+      description: Optional. Remove private information before posting.

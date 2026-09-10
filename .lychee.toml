@@ -1,0 +1,14 @@
+timeout = 30
+max_retries = 2
+max_concurrency = 6
+include_mail = false
+
+# Dynamic badges can return HTTP 200 for "unknown" or be absent before the first
+# published report. The linked provider, not an image fetch, proves the metric.
+# Shadertoy blocks automated clients; attribution records pinned source evidence.
+exclude = [
+  '^https://img\.shields\.io/',
+  '^https://codecov\.io/gh/sne11ius/arasaka-kde/branch/main/graph/badge\.svg$',
+  '^https://api\.scorecard\.dev/projects/github\.com/sne11ius/arasaka-kde/badge$',
+  '^https://www\.shadertoy\.com/',
+]

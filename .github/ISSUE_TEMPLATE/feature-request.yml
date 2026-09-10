@@ -1,0 +1,23 @@
+name: Feature idea
+description: Suggest a change that would make the desktop or docs better.
+title: "idea: "
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What would you like to improve?
+      description: Describe the experience or problem in your own words.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What would a good result look like?
+      description: A concrete example, sketch, or workflow is helpful.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context and alternatives
+      description: Optional. For backgrounds, desktop, locker, and PLM normally share the same experience.
