@@ -14,8 +14,8 @@ using namespace arasaka::rain;
 
 namespace arasaka::rain {
 struct DropletSimulationTestAccess {
-    static void setDrops(DropletSimulation &simulation, std::vector<Drop> drops) {
-        simulation.reset(128, 128, 1, 0);
+    static void setDrops(DropletSimulation &simulation, std::vector<Drop> drops, double width = 128, double height = 128) {
+        simulation.reset(width, height, 1, 0);
         simulation.lengthScale_ = 1;
         simulation.drops_ = std::move(drops);
         for (const auto &d : simulation.drops_) simulation.nextId_ = std::max(simulation.nextId_, d.id + 1);
@@ -116,10 +116,11 @@ private Q_SLOTS:
         QVERIFY(at(pixels(field), 50, 24, 1) < 0.001);
     }
 
-    void movingCapsElongateWithoutChangingAreaOrVolume() {
+    void movingCapsRedistributeWaterWithoutChangingAreaOrVolume() {
         QVERIFY(context.makeCurrent(&surface));
         double roundArea = 0, roundVolume = 0;
-        for (const auto velocity : {Vec2{}, Vec2{0, 120}, Vec2{120, 0}, Vec2{120, 120}, Vec2{0, 900}}) {
+        for (const auto velocity : {Vec2{}, Vec2{0, 30}, Vec2{0, 60}, Vec2{0, 120}, Vec2{120, 0},
+                                    Vec2{120, 120}, Vec2{-120, 120}, Vec2{0, 900}, Vec2{0, -120}}) {
             RainFieldRenderer field;
             QString error;
             QVERIFY2(field.initialize({128, 128}, &error), qPrintable(error));
@@ -127,24 +128,31 @@ private Q_SLOTS:
             // No swept segment: only actual velocity may deform the current physical cap.
             QVERIFY(field.render(drops, 0));
             const auto p = pixels(field);
-            QVERIFY(std::abs(at(p, 64, 64) - 7.2f) < .02f);
             const double speed = std::hypot(velocity.x, velocity.y);
             const Vec2 axis = speed > 0 ? Vec2{velocity.x / speed, velocity.y / speed} : Vec2{0, 1};
-            double area = 0, volume = 0, along = 0, across = 0;
+            double area = 0, volume = 0, along = 0, across = 0, alongMoment = 0, acrossMoment = 0, peak = 0;
             for (int y = 0; y < 128; ++y) {
                 for (int x = 0; x < 128; ++x) {
                     const double height = at(p, x, y);
                     QVERIFY(std::isfinite(height) && height >= 0);
-                    area += height > .01;
+                    area += height > .0001; // Include the physically present shallow upper film.
                     volume += height;
+                    peak = std::max(peak, height);
                     const double u = (x - 64) * axis.x + (y - 64) * axis.y;
                     const double v = (x - 64) * axis.y - (y - 64) * axis.x;
                     along += height * u * u;
                     across += height * v * v;
+                    alongMoment += height * u;
+                    acrossMoment += height * v;
                     if (height > .01)
                         QVERIFY(std::hypot(x - 64, y - 64) < 24); // Even max-speed optics stay local.
                 }
             }
+            QVERIFY(peak >= 7.18 && peak < 1.3 * 7.2); // Water can thicken the belly while total volume stays fixed.
+            if (velocity.y <= 0) QVERIFY(std::abs(at(p, 64, 64) - 7.2f) < .02f);
+            // Measure elongation around the redistributed water's centroid.
+            along -= alongMoment * alongMoment / volume;
+            across -= acrossMoment * acrossMoment / volume;
             qInfo() << "CAP_SHAPE" << velocity.x << velocity.y << "axisRatio" << std::sqrt(along / across)
                     << "areaPixels" << area << "heightIntegral" << volume;
             if (speed == 0) {
@@ -155,11 +163,13 @@ private Q_SLOTS:
                 QVERIFY(std::abs(at(p, 64, 70) - 5.8049f) < .02f); // Original spherical-cap section.
             } else {
                 const double axisRatio = std::sqrt(along / across);
-                QVERIFY2(axisRatio > 1.2, "Moving caps retain a slight stretch along velocity");
+                // A falling bulb carries water farther sideways; it need not retain the old narrow oval's inertia ratio.
+                QVERIFY2(axisRatio > (velocity.y <= 0 && speed >= 120 ? 1.2 : 1.05),
+                         "Moving caps retain a slight stretch along velocity");
                 QVERIFY2(axisRatio < 1.5, "Fast caps must stay rounded rather than becoming long ovals");
                 QVERIFY2(std::abs(area - roundArea) < .06 * roundArea, "Optical stretching preserves footprint area");
                 QVERIFY2(std::abs(volume - roundVolume) < .015 * roundVolume, "Integrated physical height must not add water");
-                if (velocity.x == 0) {
+                if (velocity.x == 0 && velocity.y >= 120) {
                     QVERIFY(at(p, 64, 77) > .1f); // Enlarged quad must not clip the long axis.
                     QCOMPARE(at(p, 75, 64), 0); // Reciprocal transverse compression, not inflated radius.
                 }
@@ -182,6 +192,186 @@ private Q_SLOTS:
         QVERIFY(field.resize({128, 128}, &error));
         QVERIFY(field.render({}, 0));
         for (float value : pixels(field)) QCOMPARE(value, 0);
+    }
+
+    void fallingHeightRedistributionConservesTheCapIntegral() {
+        QVERIFY(context.makeCurrent(&surface));
+        // A larger cap separates normalization errors from pixel-edge sampling noise.
+        // Rest cap: r=100, h=60, V=pi*h*(3*r*r+h*h)/6 = 336000*pi.
+        const double expected = 336000 * std::acos(-1.);
+        for (const auto velocity : {Vec2{}, Vec2{0, 15}, Vec2{0, 30}, Vec2{0, 60}, Vec2{0, 90},
+                                    Vec2{0, 120}, Vec2{0, 900}, Vec2{120, 120}, Vec2{-120, 120}}) {
+            RainFieldRenderer field;
+            QString error;
+            QVERIFY2(field.initialize({512, 512}, &error), qPrintable(error));
+            QVERIFY(field.render({{1, {256.5, 256.5}, {256.5, 256.5}, velocity, 1000000}}, 0));
+            const auto p = pixels(field);
+            double integral = 0;
+            for (std::size_t i = 0; i < p.size(); i += 4) {
+                QVERIFY(std::isfinite(p[i]) && p[i] >= 0);
+                integral += p[i];
+            }
+            qInfo() << "CAP_VOLUME" << velocity.x << velocity.y << integral << "relative error" << integral / expected - 1;
+            QVERIFY2(std::abs(integral / expected - 1) < .0007,
+                     "the upper film and lower bulb must redistribute the existing water, not create or remove it");
+        }
+    }
+
+    void fallingCapsHaveLowerBulbsAndThinUpperFilms_data() {
+        QTest::addColumn<bool>("merging");
+        QTest::addColumn<bool>("outline");
+        QTest::newRow("single drop outline") << false << true;
+        QTest::newRow("single drop depth") << false << false;
+        QTest::newRow("merging lobe outline") << true << true;
+        QTest::newRow("merging lobe depth") << true << false;
+    }
+
+    void fallingCapsHaveLowerBulbsAndThinUpperFilms() {
+        QFETCH(bool, merging);
+        QFETCH(bool, outline);
+        QVERIFY(context.makeCurrent(&surface));
+        DropletSimulation simulation;
+        std::vector<Drop> drops{{1, {48.5, 64.5}, {48.5, 64.5}, {0, 120}, 4096}};
+        if (merging) drops.push_back({2, {80.5, 64.5}, {80.5, 64.5}, {0, 120}, 4096});
+        DropletSimulationTestAccess::setDrops(simulation, drops);
+        if (merging) DropletSimulationTestAccess::collide(simulation);
+        RainFieldRenderer field;
+        QString error;
+        QVERIFY2(field.initialize({128, 128}, &error), qPrintable(error));
+        QVERIFY(field.render(simulation.drops(), 0));
+        const auto p = pixels(field);
+        int top = 128, bottom = 0, peakY = 0;
+        for (int y = 0; y < 128; ++y) {
+            if (at(p, 48, y) > at(p, 48, peakY)) peakY = y;
+            for (int x = 28; x <= 68; ++x) {
+                if (at(p, x, y) > .0001) {
+                    top = std::min(top, y);
+                    bottom = std::max(bottom, y);
+                }
+            }
+        }
+        QVERIFY(bottom > top);
+        // Compare equal-height sections of the silhouette, not sections around a shifted height peak.
+        const int middle = qRound((top + bottom) * .5);
+        if (outline) {
+            int upperWidth = 0, lowerWidth = 0;
+            for (int x = 28; x <= 68; ++x) {
+                upperWidth += at(p, x, middle - 8) > .0001;
+                lowerWidth += at(p, x, middle + 8) > .0001;
+            }
+            qInfo() << "FALLING_OUTLINE" << merging << "upper/lower widths" << upperWidth << lowerWidth;
+            QVERIFY2(lowerWidth > 1.2 * upperWidth,
+                     "the lower body must be visibly wider than the upper part, with a rounded bulb");
+        } else {
+            const float upper = at(p, 48, middle - 8), lower = at(p, 48, middle + 8);
+            const float upperSlope = at(p, 48, top + 2) - at(p, 48, top + 1);
+            const float lowerSlope = at(p, 48, bottom - 2) - at(p, 48, bottom - 1);
+            qInfo() << "FALLING_DEPTH" << merging << "upper/lower heights" << upper << lower
+                    << "rim slopes" << upperSlope << lowerSlope;
+            QVERIFY2(upper > 0 && upper < .5 * lower,
+                     "water above the belly must be a shallow film in Z, not just a narrower outline");
+            QVERIFY2(upperSlope > 0 && upperSlope < .3 * lowerSlope,
+                     "the upper contact line must ease into the glass with weaker refraction");
+            QVERIFY2(peakY > middle + 2, "the thickest water belongs inside the lower bulb");
+        }
+        QVERIFY(field.render(simulation.drops(), 0));
+        QCOMPARE(pixels(field), p);
+    }
+
+    void fallingProfileSurvivesReimpactAndSettlement() {
+        QVERIFY(context.makeCurrent(&surface));
+        DropletSimulation simulation;
+        DropletSimulationTestAccess::setDrops(simulation, {
+            {1, {52.5, 64.5}, {52.5, 64.5}, {0, 120}, 1728}, {2, {76.5, 64.5}, {76.5, 64.5}, {}, 1728}});
+        DropletSimulationTestAccess::collide(simulation);
+        simulation.advance(.05);
+        RainFieldRenderer field;
+        QString error;
+        QVERIFY(field.initialize({128, 128}, &error));
+        QVERIFY(field.render(simulation.drops(), 0));
+        const auto before = pixels(field);
+        const auto body = simulation.drops()[0];
+        const Vec2 p{body.position.x + body.radius() + 4, body.position.y};
+        DropletSimulationTestAccess::append(simulation, {3, p, p, {}, 64});
+        DropletSimulationTestAccess::collide(simulation);
+        QVERIFY(field.render(simulation.drops(), 1.0 / 30));
+        const auto after = pixels(field);
+        for (int y = 44; y <= 88; ++y)
+            for (int x = 36; x <= 60; ++x)
+                QVERIFY2(std::abs(at(before, x, y) - at(after, x, y)) < .03,
+                         "a new impact must retain the current bulb and film of the existing lobes");
+
+        auto settled = simulation.drops()[0];
+        settled.mergeAge = settled.mergeDuration - 1e-6;
+        QVERIFY(field.render({settled}, 1.0 / 30));
+        const auto almost = pixels(field);
+        settled.merging.clear();
+        QVERIFY(field.render({settled}, 1.0 / 30));
+        const auto final = pixels(field);
+        for (std::size_t i = 0; i < final.size(); i += 4)
+            QVERIFY2(std::abs(almost[i] - final[i]) < .01,
+                     "the blended gravity profile must meet the final single cap without a shape pop");
+    }
+
+    void shallowMergeNecksRetainSoftRims() {
+        QVERIFY(context.makeCurrent(&surface));
+        Drop body{1, {64.5, 64.75}, {64.5, 64.75}, {0, 120}, 8192};
+        body.merging = {{{}, 16, {0, 1}, 1.2, .5, 1}, {{}, 16, {0, 1}, 1.2, .5, 1}};
+        body.mergeDuration = .2;
+        body.mergeJoins[0] = {0, 1, .01};
+        RainFieldRenderer field;
+        QString error;
+        QVERIFY(field.initialize({128, 128}, &error));
+        QVERIFY(field.render({body}, 0));
+        const auto p = pixels(field);
+        // The film meets the glass at y=45.55. Its gentle contact angle lets even this
+        // tiny union rise just above that rim; a linear-in-smoothing quad clips it off.
+        QVERIFY2(at(p, 64, 45) > .001, "the soft upper neck must not be clipped by its render bounds");
+        QCOMPARE(at(p, 64, 40), 0); // Signed exterior must still reject distant ghost film.
+        QCOMPARE(at(p, 20, 40), 0);
+        QCOMPARE(at(p, 100, 40), 0);
+    }
+
+    void clickingTheVisibleUpperMergeFilmSplashesIt() {
+        QVERIFY(context.makeCurrent(&surface));
+        DropletSimulation simulation;
+        DropletSimulationTestAccess::setDrops(simulation, {
+            {1, {800, 1000}, {800, 1000}, {0, 120}, 8000000},
+            {2, {1200, 1000}, {1200, 1000}, {0, 120}, 8000000}}, 2000, 2000);
+        DropletSimulationTestAccess::collide(simulation);
+        simulation.advance(.1);
+        QCOMPARE(simulation.drops().size(), std::size_t(1));
+        const auto body = simulation.drops()[0];
+        RainFieldRenderer field;
+        QString error;
+        QVERIFY(field.initialize({2000, 2000}, &error));
+        QVERIFY(field.render(simulation.drops(), 0));
+        const auto p = pixels(field);
+        // A positive-height patch in the shallow joining film, beyond both individual lobe margins.
+        // Logical (1000.9259, 797.2222) is the center of native texel (540,430), top-left origin.
+        const Vec2 click{1000.9259259259, 797.2222222222};
+        QVERIFY(p[((1079 - 430) * 1080 + 540) * 4] > 1);
+        const auto shape = body.surface();
+        for (std::size_t i = 0; i < shape.count; ++i) {
+            const auto &lobe = shape.lobes[i];
+            QVERIFY(lobe.distance({click.x - body.position.x - lobe.offset.x,
+                                   click.y - body.position.y - lobe.offset.y}) - lobe.radius > 16);
+        }
+        // Compare independent CPU targeting and GPU rendering, including the signed exterior.
+        for (int y = 0; y < 1080; y += 13) {
+            for (int x = 0; x < 1080; x += 13) {
+                const double cpu = shape.height({(x + .5) * 2000 / 1080 - body.position.x,
+                                                 (y + .5) * 2000 / 1080 - body.position.y});
+                const double gpu = p[((1079 - y) * 1080 + x) * 4];
+                QVERIFY2(std::abs(cpu - gpu) < .001 * cpu + .001,
+                         "clickable water must agree with the rendered bulb, upper film, and liquid neck");
+            }
+        }
+        DropletSimulationTestAccess::splash(simulation, click);
+        QVERIFY2(simulation.drops().size() >= 3, "the visible joining film belongs to the clickable water body");
+        double volume = 0;
+        for (const auto &drop : simulation.drops()) volume += drop.volume;
+        QVERIFY(std::abs(volume - 16000000) < .0001);
     }
 
     void mergingCapsRetainLobesAndGrowALiquidNeck() {

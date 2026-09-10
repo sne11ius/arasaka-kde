@@ -30,12 +30,12 @@ bool RainFieldRenderer::initialize(QSizeF size, QString *error)
 layout(location=0) in vec2 position;
 layout(location=1) in vec4 endpoints;
 layout(location=2) in vec3 profile;
-layout(location=3) in vec3 deformation;
+layout(location=3) in vec4 deformation;
 uniform vec2 logicalSize;
 out vec2 point;
 flat out vec4 segment;
 flat out vec3 shape;
-flat out vec3 ellipse;
+flat out vec4 ellipse;
 void main() {
     point = position;
     segment = endpoints;
@@ -43,25 +43,50 @@ void main() {
     ellipse = deformation;
     gl_Position = vec4(position / logicalSize * vec2(2.,-2.) + vec2(-1.,1.), 0., 1.);
 })";
-    const char *capFragment = R"(
+    // Both isolated caps and retained merge lobes use the same footprint AND height.
+    // Screen Y points down. Widen the lower body; independently thin and soften the upper film.
+    const QByteArray capProfile = R"(
+vec2 capProfile(vec2 delta, float r, float h, vec4 ellipse) {
+    float reach = r * length(vec2(ellipse.y * ellipse.z, ellipse.x / ellipse.z));
+    float y = clamp(delta.y / reach, -1., 1.);
+    float bulb = y * (1.5 - .5*y*y);
+    float flow = ellipse.w;
+    // Odd transverse scaling preserves footprint area; keep the CPU hit-test inverse in sync.
+    delta.x /= 1. + .3*flow*bulb;
+    float distance = length(vec2(dot(delta, ellipse.xy) / ellipse.z,
+                                dot(delta, vec2(-ellipse.y, ellipse.x)) * ellipse.z));
+    float sphere = (r*r + h*h) / (2.*h);
+    float cap = sqrt(max(0., sphere*sphere - distance*distance)) - (sphere-h);
+    if (distance > r) cap = -(distance-r) * r / max(sphere-h, .00001);
+    float upper = 1. - smoothstep(-.5, 0., y);
+    // Squaring the upper height eases its contact angle into the glass. The signed
+    // quadratic continuation stays negative outside, so unions cannot create ghost sheets.
+    cap *= 1. - flow*upper*(1. - abs(cap)/h);
+    cap *= 1. + .6*flow*bulb;
+    // Integral over the rest cap h/r=.6, including the width Jacobian. With s=z/h,
+    // u=upper, g=bulb: integrate s*(1+.3*f*g)*(1+.6*f*g)*(1-f*u*(1-s)).
+    // Odd terms vanish; the remaining cubic is independent of radius and ellipse orientation.
+    // Trails have flow=0 and retain their original shallow spherical profile.
+    float volumeScale = 1. + flow*(-.1103962 + flow*(.1260102 - flow*.0110236));
+    return vec2(cap / volumeScale, distance);
+}
+)";
+    const QByteArray capFragment = QByteArray(R"(
 #version 330 core
 in vec2 point;
 flat in vec4 segment;
 flat in vec3 shape;
-flat in vec3 ellipse;
+flat in vec4 ellipse;
 out vec4 field;
+)") + capProfile + R"(
 void main() {
     vec2 d = segment.zw - segment.xy;
     float t = clamp(dot(point - segment.xy, d) / max(dot(d,d), 0.0001), 0., 1.);
     vec2 offset = point - mix(segment.xy, segment.zw, t);
-    vec2 axis = ellipse.xy;
-    // Reciprocal axes preserve both footprint area and the integral of the physical height profile.
-    float distance = length(vec2(dot(offset, axis) / ellipse.z,
-                                 dot(offset, vec2(-axis.y, axis.x)) * ellipse.z));
     float r = shape.x, h = shape.y;
-    float sphere = (r*r + h*h) / (2.*h);
-    float z = max(0., sqrt(max(0., sphere*sphere - distance*distance)) - (sphere-h));
-    float wet = 1. - smoothstep(r*.65, r, distance);
+    vec2 cap = capProfile(offset, r, h, ellipse);
+    float z = max(0., cap.x);
+    float wet = 1. - smoothstep(r*.65, r, cap.y);
     field = shape.z < .5 ? vec4(z, 0., wet, 0.) : vec4(0., z, wet*.7, 0.);
 })";
     const char *historyVertex = R"(
@@ -79,10 +104,10 @@ layout(location=2) in vec4 lobe0;
 layout(location=3) in vec4 lobe1;
 layout(location=4) in vec4 lobe2;
 layout(location=5) in vec4 lobe3;
-layout(location=6) in vec3 axis0;
-layout(location=7) in vec3 axis1;
-layout(location=8) in vec3 axis2;
-layout(location=9) in vec3 axis3;
+layout(location=6) in vec4 axis0;
+layout(location=7) in vec4 axis1;
+layout(location=8) in vec4 axis2;
+layout(location=9) in vec4 axis3;
 layout(location=10) in vec3 join0;
 layout(location=11) in vec3 join1;
 layout(location=12) in vec3 join2;
@@ -90,7 +115,7 @@ uniform vec2 logicalSize;
 out vec2 point;
 flat out vec2 params;
 flat out vec4 lobes[4];
-flat out vec3 axes[4];
+flat out vec4 axes[4];
 flat out vec3 joins[3];
 void main() {
     point = position; params = parameters;
@@ -99,30 +124,22 @@ void main() {
     joins[0] = join0; joins[1] = join1; joins[2] = join2;
     gl_Position = vec4(position / logicalSize * vec2(2.,-2.) + vec2(-1.,1.), 0., 1.);
 })";
-    const char *mergeFragment = R"(
+    const QByteArray mergeFragment = QByteArray(R"(
 #version 330 core
 in vec2 point;
 flat in vec2 params;
 flat in vec4 lobes[4];
-flat in vec3 axes[4];
+flat in vec4 axes[4];
 flat in vec3 joins[3];
 out vec4 field;
+)") + capProfile + R"(
 void main() {
     float heights[7];
     float peak = 0.;
     for (int i = 0; i < int(params.x); ++i) {
         vec2 delta = point - lobes[i].xy;
-        vec3 ellipse = axes[i];
-        float distance = length(vec2(dot(delta, ellipse.xy) / ellipse.z,
-            dot(delta, vec2(-ellipse.y, ellipse.x)) * ellipse.z));
         float r = lobes[i].z, h = lobes[i].w;
-        float sphere = (r*r + h*h) / (2.*h);
-        // Retain negative height beyond the rim so the smooth union can form a neck.
-        float cap = sqrt(max(0., sphere*sphere - distance*distance)) - (sphere-h);
-        // Continue at the rim's slope rather than flattening to a constant negative
-        // value: wide retained necks must not add a distant rectangular footprint.
-        if (distance > r) cap = -(distance-r) * r / max(sphere-h, .00001);
-        heights[i] = cap;
+        heights[i] = capProfile(delta, r, h, axes[i]).x;
         peak = max(peak, h);
     }
     for (int i = 0; i < int(params.x)-1; ++i) {
@@ -168,26 +185,26 @@ void main() {
     f->glBindVertexArray(vao_);
     f->glBindBuffer(GL_ARRAY_BUFFER, vbo_);
     // Ordinary caps plus up to four independently moving lobe trails per physical body.
-    f->glBufferData(GL_ARRAY_BUFFER, DropletSimulation::maximumPopulation * 30 * 12 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+    f->glBufferData(GL_ARRAY_BUFFER, DropletSimulation::maximumPopulation * 30 * 13 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
     for (int i = 0; i < 4; ++i) f->glEnableVertexAttribArray(i);
-    f->glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 12 * sizeof(float), nullptr);
-    f->glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 12 * sizeof(float), reinterpret_cast<void *>(2 * sizeof(float)));
-    f->glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 12 * sizeof(float), reinterpret_cast<void *>(6 * sizeof(float)));
-    f->glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 12 * sizeof(float), reinterpret_cast<void *>(9 * sizeof(float)));
+    f->glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 13 * sizeof(float), nullptr);
+    f->glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 13 * sizeof(float), reinterpret_cast<void *>(2 * sizeof(float)));
+    f->glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 13 * sizeof(float), reinterpret_cast<void *>(6 * sizeof(float)));
+    f->glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, 13 * sizeof(float), reinterpret_cast<void *>(9 * sizeof(float)));
     if (!mergeVao_) f->glGenVertexArrays(1, &mergeVao_);
     if (!mergeVbo_) f->glGenBuffers(1, &mergeVbo_);
     f->glBindVertexArray(mergeVao_);
     f->glBindBuffer(GL_ARRAY_BUFFER, mergeVbo_);
-    f->glBufferData(GL_ARRAY_BUFFER, DropletSimulation::maximumPopulation * 6 * 41 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+    f->glBufferData(GL_ARRAY_BUFFER, DropletSimulation::maximumPopulation * 6 * 45 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
     for (int i = 0; i < 13; ++i) f->glEnableVertexAttribArray(i);
-    f->glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 41 * sizeof(float), nullptr);
-    f->glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 41 * sizeof(float), reinterpret_cast<void *>(2 * sizeof(float)));
+    f->glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 45 * sizeof(float), nullptr);
+    f->glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 45 * sizeof(float), reinterpret_cast<void *>(2 * sizeof(float)));
     for (int i = 0; i < 4; ++i) {
-        f->glVertexAttribPointer(2 + i, 4, GL_FLOAT, GL_FALSE, 41 * sizeof(float), reinterpret_cast<void *>((4 + i * 4) * sizeof(float)));
-        f->glVertexAttribPointer(6 + i, 3, GL_FLOAT, GL_FALSE, 41 * sizeof(float), reinterpret_cast<void *>((20 + i * 3) * sizeof(float)));
+        f->glVertexAttribPointer(2 + i, 4, GL_FLOAT, GL_FALSE, 45 * sizeof(float), reinterpret_cast<void *>((4 + i * 4) * sizeof(float)));
+        f->glVertexAttribPointer(6 + i, 4, GL_FLOAT, GL_FALSE, 45 * sizeof(float), reinterpret_cast<void *>((20 + i * 4) * sizeof(float)));
     }
     for (int i = 0; i < 3; ++i)
-        f->glVertexAttribPointer(10 + i, 3, GL_FLOAT, GL_FALSE, 41 * sizeof(float), reinterpret_cast<void *>((32 + i * 3) * sizeof(float)));
+        f->glVertexAttribPointer(10 + i, 3, GL_FLOAT, GL_FALSE, 45 * sizeof(float), reinterpret_cast<void *>((36 + i * 3) * sizeof(float)));
     f->glBindVertexArray(0);
     if (!vao_ || !vbo_ || !mergeVao_ || !mergeVbo_ || f->glGetError() != GL_NO_ERROR) {
         if (error) *error = QStringLiteral("Rain geometry allocation failed");
@@ -277,22 +294,23 @@ bool RainFieldRenderer::render(const std::vector<Drop> &drops, double seconds)
 
     std::vector<float> vertices;
     std::vector<float> mergeVertices;
-    vertices.reserve(std::min(drops.size(), DropletSimulation::maximumPopulation) * 12 * 12);
-    auto quad = [&](Vec2 start, Vec2 end, double r, double h, float trail, Vec2 axis, double stretch) {
-        const double rx = r * std::hypot(axis.x * stretch, axis.y / stretch);
-        const double ry = r * std::hypot(axis.y * stretch, axis.x / stretch);
-        const double left = std::min(start.x, end.x) - rx, right = std::max(start.x, end.x) + rx;
-        const double top = std::min(start.y, end.y) - ry, bottom = std::max(start.y, end.y) + ry;
+    vertices.reserve(std::min(drops.size(), DropletSimulation::maximumPopulation) * 12 * 13);
+    auto quad = [&](Vec2 start, Vec2 end, const SurfaceLobe &lobe, double h, float trail) {
+        const auto extent = lobe.halfExtent();
+        const double left = std::min(start.x, end.x) - extent.x, right = std::max(start.x, end.x) + extent.x;
+        const double top = std::min(start.y, end.y) - extent.y, bottom = std::max(start.y, end.y) + extent.y;
         for (Vec2 p : {Vec2{left, top}, Vec2{left, bottom}, Vec2{right, bottom},
                        Vec2{left, top}, Vec2{right, bottom}, Vec2{right, top}}) {
-            for (double value : {p.x, p.y, start.x, start.y, end.x, end.y, r, h, double(trail), axis.x, axis.y, stretch})
+            for (double value : {p.x, p.y, start.x, start.y, end.x, end.y, lobe.radius, h, double(trail),
+                                 lobe.axis.x, lobe.axis.y, lobe.stretch, lobe.flow})
                 vertices.push_back(float(value));
         }
     };
     for (std::size_t i = 0; i < std::min(drops.size(), DropletSimulation::maximumPopulation); ++i) {
         const auto &drop = drops[i];
         const auto shape = drop.surface();
-        std::array<float, 39> payload{};
+        const double margin = shape.margin();
+        std::array<float, 43> payload{};
         payload[0] = float(shape.count); payload[1] = float(shape.smoothing);
         double left = 1e20, right = -1e20, top = 1e20, bottom = -1e20;
         for (std::size_t j = 0; j < shape.count; ++j) {
@@ -300,29 +318,27 @@ bool RainFieldRenderer::render(const std::vector<Drop> &drops, double seconds)
             const Vec2 p{drop.position.x + lobe.offset.x, drop.position.y + lobe.offset.y};
             const double h = .6 * lobe.radius;
             if (shape.count == 1) {
-                quad(p, p, lobe.radius, h, 0, lobe.axis, lobe.stretch);
+                quad(p, p, lobe, h, 0);
             } else {
-                const double rx = lobe.radius * std::hypot(lobe.axis.x * lobe.stretch, lobe.axis.y / lobe.stretch);
-                const double ry = lobe.radius * std::hypot(lobe.axis.y * lobe.stretch, lobe.axis.x / lobe.stretch);
-                const double margin = 2 * shape.smoothing;
-                left = std::min(left, p.x - rx - margin); right = std::max(right, p.x + rx + margin);
-                top = std::min(top, p.y - ry - margin); bottom = std::max(bottom, p.y + ry + margin);
+                const auto extent = lobe.halfExtent();
+                left = std::min(left, p.x - extent.x - margin); right = std::max(right, p.x + extent.x + margin);
+                top = std::min(top, p.y - extent.y - margin); bottom = std::max(bottom, p.y + extent.y + margin);
                 payload[2 + j*4] = float(p.x); payload[3 + j*4] = float(p.y);
                 payload[4 + j*4] = float(lobe.radius); payload[5 + j*4] = float(h);
-                payload[18 + j*3] = float(lobe.axis.x); payload[19 + j*3] = float(lobe.axis.y);
-                payload[20 + j*3] = float(lobe.stretch);
+                payload[18 + j*4] = float(lobe.axis.x); payload[19 + j*4] = float(lobe.axis.y);
+                payload[20 + j*4] = float(lobe.stretch); payload[21 + j*4] = float(lobe.flow);
             }
             // Shape contraction leaves wetness through history, not fictitious solid trails.
             if (dt > 0 && drop.previousPosition != drop.position) {
                 const Vec2 start{drop.previousPosition.x + lobe.offset.x, drop.previousPosition.y + lobe.offset.y};
-                quad(start, p, lobe.radius * .4, h * .12, 1, {0, 1}, 1);
+                quad(start, p, {{}, lobe.radius * .4}, h * .12, 1);
             }
         }
         if (shape.count > 1) {
             for (std::size_t j = 0; j + 1 < shape.count; ++j) {
-                payload[30 + j*3] = float(shape.joins[j].left);
-                payload[31 + j*3] = float(shape.joins[j].right);
-                payload[32 + j*3] = float(shape.joins[j].smoothing);
+                payload[34 + j*3] = float(shape.joins[j].left);
+                payload[35 + j*3] = float(shape.joins[j].right);
+                payload[36 + j*3] = float(shape.joins[j].smoothing);
             }
             for (const Vec2 p : {Vec2{left, top}, Vec2{left, bottom}, Vec2{right, bottom},
                                 Vec2{left, top}, Vec2{right, bottom}, Vec2{right, top}}) {
@@ -338,7 +354,7 @@ bool RainFieldRenderer::render(const std::vector<Drop> &drops, double seconds)
     f->glEnable(GL_BLEND);
     f->glBlendEquation(GL_MAX);
     f->glBlendFunc(GL_ONE, GL_ONE);
-    f->glDrawArrays(GL_TRIANGLES, 0, int(vertices.size() / 12));
+    f->glDrawArrays(GL_TRIANGLES, 0, int(vertices.size() / 13));
     if (!mergeVertices.empty()) {
         // All merging bodies share one draw call; a dense splash never creates per-drop GL calls.
         coalescence_->bind();
@@ -346,7 +362,7 @@ bool RainFieldRenderer::render(const std::vector<Drop> &drops, double seconds)
         f->glBindVertexArray(mergeVao_);
         f->glBindBuffer(GL_ARRAY_BUFFER, mergeVbo_);
         f->glBufferSubData(GL_ARRAY_BUFFER, 0, mergeVertices.size() * sizeof(float), mergeVertices.data());
-        f->glDrawArrays(GL_TRIANGLES, 0, int(mergeVertices.size() / 41));
+        f->glDrawArrays(GL_TRIANGLES, 0, int(mergeVertices.size() / 45));
         coalescence_->release();
     }
     f->glDisable(GL_BLEND);

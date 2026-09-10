@@ -28,6 +28,11 @@ struct SurfaceLobe {
     Vec2 axis{0, 1};
     double stretch = 1;
     double weight = 1; // Share of the physical body's water, independent of overlapping optical radii.
+    double flow = 0; // 0..1: broad lower bulb and shallow upper film as water slides downward.
+
+    Vec2 halfExtent() const; // Conservative footprint bounds, including the lower bulb.
+    double distance(Vec2 delta) const; // Inverse-deformed radial coordinate for visible-cap hit testing.
+    double signedHeight(Vec2 delta) const; // Same cap/film profile and exterior continuation as the GPU.
 };
 
 struct SurfaceJoin {
@@ -43,6 +48,8 @@ struct DropSurface {
     std::array<SurfaceJoin, maximumLobes - 1> joins{};
     std::size_t count = 1;
     double smoothing = 0; // Signed-height smooth-union width in logical pixels.
+    double margin() const; // Extra footprint reach from necks joining shallow upper films.
+    double height(Vec2 delta) const; // Union height relative to the physical drop's position.
 };
 
 struct Drop {
@@ -50,7 +57,7 @@ struct Drop {
     Vec2 position;
     Vec2 previousPosition; // Position at entry to the last positive-time displayed frame.
     Vec2 velocity;
-    double volume = 1; // Normalized cap volume: radius^3, with cap height = 0.6 * radius.
+    double volume = 1; // Normalized rest-cap volume: radius^3, with rest height = 0.6 * radius.
     // Bounded optical history of a physical merge. Time advances only on fixed active ticks.
     std::vector<SurfaceLobe> merging{};
     double mergeAge = 0;

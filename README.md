@@ -634,8 +634,13 @@ active-time condensation grows existing caps fairly, allowing pinned beads to
 start sliding naturally. Mostly small births and slow accretion retain several
 hundred varied beads alongside fewer large flowing drops. Birth radii and adhesion
 scale together with viewport height; pause freezes growth as well as motion.
-Moving caps elongate along velocity with area-preserving optics; stationary caps
-remain round. These physical drops do not reproduce Heartfelt's procedural shapes exactly.
+Moving caps elongate along velocity; downward motion gives them a wider, rounded
+lower bulb and a shallower upper film. The upper surface meets the glass gently,
+softening its outline and refraction while the thickest water sits in the lower
+body. The footprint and height profile preserve area and integrated water volume,
+blend through liquid merges, and keep click targeting aligned with the visible
+body. Stationary caps remain round. These physical drops do not reproduce
+Heartfelt's procedural shapes exactly.
 Both adaptations retain the artwork filtering, fog and postprocessing. Lightning
 keeps one in four original burst windows at 25% strength, without changing flash
 timing or the background's normal brightness. This gives roughly one burst every

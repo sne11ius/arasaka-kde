@@ -32,6 +32,7 @@ void collapseSurface(DropSurface &shape)
         + share * (1 - share) * nearest * nearest;
     x.offset = {std::lerp(y.offset.x, x.offset.x, share), std::lerp(y.offset.y, x.offset.y, share)};
     x.radius = std::sqrt(radiusSquared);
+    x.flow = std::lerp(y.flow, x.flow, share);
     x.weight += y.weight;
     for (std::size_t i = b; i + 1 < shape.count; ++i) shape.lobes[i] = shape.lobes[i + 1];
     const auto oldJoins = shape.joins;
@@ -72,11 +73,71 @@ DropSurface joinSurfaces(DropSurface a, DropSurface b)
 double Drop::radius() const { return std::cbrt(volume); }
 double Drop::height() const { return 0.6 * radius(); }
 
+Vec2 SurfaceLobe::halfExtent() const
+{
+    return {radius * std::hypot(axis.x * stretch, axis.y / stretch) * (1 + .3 * flow),
+            radius * std::hypot(axis.y * stretch, axis.x / stretch)};
+}
+
+double SurfaceLobe::distance(Vec2 delta) const
+{
+    // Keep this inverse width profile in sync with capProfile in the field renderer.
+    // The odd width adjustment preserves footprint area; its slope vanishes at both ends.
+    const double y = std::clamp(delta.y / halfExtent().y, -1., 1.);
+    const double bulb = y * (1.5 - .5 * y * y);
+    delta.x /= 1 + .3 * flow * bulb;
+    return std::hypot((delta.x * axis.x + delta.y * axis.y) / stretch,
+                      (delta.y * axis.x - delta.x * axis.y) * stretch);
+}
+
+double SurfaceLobe::signedHeight(Vec2 delta) const
+{
+    // CPU counterpart of capProfile: visible joining film can extend beyond every lobe's rim.
+    const double h = .6 * radius, sphere = (radius * radius + h * h) / (2 * h);
+    const double d = distance(delta);
+    double cap = std::sqrt(std::max(0., sphere * sphere - d * d)) - (sphere - h);
+    if (d > radius) cap = -(d - radius) * radius / std::max(sphere - h, .00001);
+    const double y = std::clamp(delta.y / halfExtent().y, -1., 1.);
+    const double bulb = y * (1.5 - .5 * y * y);
+    const double t = std::clamp((y + .5) / .5, 0., 1.);
+    const double upper = 1 - t * t * (3 - 2 * t);
+    cap *= 1 - flow * upper * (1 - std::abs(cap) / h);
+    cap *= 1 + .6 * flow * bulb;
+    return cap / (1 + flow * (-.1103962 + flow * (.1260102 - flow * .0110236)));
+}
+
+double DropSurface::height(Vec2 delta) const
+{
+    std::array<double, 2 * maximumLobes - 1> heights{};
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto &lobe = lobes[i];
+        heights[i] = lobe.signedHeight({delta.x - lobe.offset.x, delta.y - lobe.offset.y});
+    }
+    for (std::size_t i = 0; i + 1 < count; ++i) {
+        const auto &join = joins[i];
+        const double a = heights[join.left], b = heights[join.right];
+        const double k = std::max(join.smoothing, .00001);
+        const double blend = std::max(k - std::abs(a - b), 0.) / k;
+        heights[maximumLobes + i] = std::max(a, b) + blend * blend * k * .25;
+    }
+    return std::max(0., heights[count == 1 ? 0 : maximumLobes + count - 2]);
+}
+
+double DropSurface::margin() const
+{
+    double radius = 0;
+    for (std::size_t i = 0; i < count; ++i) radius = std::max(radius, lobes[i].radius);
+    // A shallow film's signed height grows quadratically outside the rim. Its smooth
+    // union can reach O(sqrt(smoothing * radius)), even late in a merge with a tiny neck.
+    return 2 * smoothing + 2 * std::sqrt(smoothing * radius);
+}
+
 DropSurface Drop::surface() const
 {
     const double speed = std::hypot(velocity.x, velocity.y);
+    const double falling = std::clamp(velocity.y / 120., 0., 1.);
     const SurfaceLobe target{{}, radius(), speed > 0 ? Vec2{velocity.x / speed, velocity.y / speed} : Vec2{0, 1},
-                             1 + .2 * std::min(speed / 120., 1.), 1};
+                             1 + .2 * std::min(speed / 120., 1.), 1, falling * falling * (3 - 2 * falling)};
     DropSurface result;
     result.lobes[0] = target;
     if (merging.empty()) return result;
@@ -105,27 +166,22 @@ DropSurface Drop::surface() const
         const double angle = .5 * std::atan2(qy, qx);
         lobe.axis = {std::cos(angle), std::sin(angle)};
         lobe.stretch = std::exp(std::hypot(qx, qy));
+        // Gravity stays screen-down even when the unoriented ellipse turns during a merge.
+        lobe.flow = std::lerp(lobe.flow, target.flow, progress);
     }
     return result;
 }
 
 double Drop::top() const
 {
-    if (merging.empty()) {
-        const double r = radius();
-        if (velocity.x == 0 && velocity.y == 0) return position.y - r;
-        const double speed = std::hypot(velocity.x, velocity.y);
-        const double stretch = 1 + .2 * std::min(speed / 120., 1.);
-        return position.y - r * std::hypot(velocity.y / speed * stretch, velocity.x / speed / stretch);
-    }
+    if (merging.empty() && velocity.x == 0 && velocity.y == 0) return position.y - radius();
     const auto shape = surface();
     double top = std::numeric_limits<double>::infinity();
     for (std::size_t i = 0; i < shape.count; ++i) {
         const auto &lobe = shape.lobes[i];
-        const double reach = lobe.radius * std::hypot(lobe.axis.y * lobe.stretch, lobe.axis.x / lobe.stretch);
-        top = std::min(top, position.y + lobe.offset.y - reach);
+        top = std::min(top, position.y + lobe.offset.y - lobe.halfExtent().y);
     }
-    return top - 2 * shape.smoothing;
+    return top - shape.margin();
 }
 
 double DropletSimulation::randomUnit()
@@ -410,10 +466,13 @@ std::uint64_t DropletSimulation::splash(Vec2 position)
         for (std::size_t i = 0; i < shape.count; ++i) {
             const auto &lobe = shape.lobes[i];
             const Vec2 delta{position.x - it->position.x - lobe.offset.x, position.y - it->position.y - lobe.offset.y};
-            const double along = (delta.x * lobe.axis.x + delta.y * lobe.axis.y) / lobe.stretch;
-            const double across = (delta.y * lobe.axis.x - delta.x * lobe.axis.y) * lobe.stretch;
-            distance = std::min(distance, std::max(0.0, std::hypot(along, across) - lobe.radius));
+            distance = std::min(distance, std::max(0.0, lobe.distance(delta) - lobe.radius));
         }
+        // The shallow union can be visible outside all individual lobe hit margins.
+        // Admit that actual water surface as a direct hit; retain fingertip margins for near misses.
+        if (distance > 0 && shape.count > 1
+            && shape.height({position.x - it->position.x, position.y - it->position.y}) > 0)
+            distance = 0;
         if (distance < closest) {
             closest = distance;
             hit = it;
@@ -462,13 +521,13 @@ std::uint64_t DropletSimulation::splash(Vec2 position)
         remaining -= d.volume;
         maxRadius = std::max(maxRadius, d.radius());
     }
-    // Minimum angular separation is .8 sectors; allow room for the renderer's 1.2x stretch.
-    double ring = 1.25 * maxRadius / std::sin(.8 * std::numbers::pi / count);
+    // Minimum angular separation is .8 sectors; allow for stretch plus the falling belly.
+    double ring = 1.6 * maxRadius / std::sin(.8 * std::numbers::pi / count);
     // A click can interrupt an extended liquid neck; spread from its whole visible footprint.
     const auto shape = parent.surface();
     for (std::size_t i = 0; i < shape.count; ++i) {
         const auto &lobe = shape.lobes[i];
-        ring = std::max(ring, std::hypot(lobe.offset.x, lobe.offset.y) + lobe.radius * lobe.stretch);
+        ring = std::max(ring, std::hypot(lobe.offset.x, lobe.offset.y) + lobe.radius * lobe.stretch * (1 + .3 * lobe.flow));
     }
     const double phase = randomUnit() * 2 * std::numbers::pi;
     const double speed = std::min(600.0, (180 + 12 * radius / lengthScale_) * std::sqrt(lengthScale_));

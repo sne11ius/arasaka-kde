@@ -199,6 +199,42 @@ void retirementWaitsForTheVisibleMergingSurface() {
     resized.advance(.25);
     require(simulation.drops().empty() && resized.drops().empty(), "fully departed surfaces must still retire");
 }
+
+void clicksFollowTheBroadLowerBelly() {
+    for (bool merging : {false, true}) {
+        DropletSimulation simulation;
+        std::vector<Drop> drops{bead(1, {900, 900}, 200, {0, 120})};
+        if (merging) drops.push_back(bead(2, {1300, 900}, 200, {0, 120}));
+        DropletSimulationTestAccess::setDrops(simulation, drops);
+        if (merging) DropletSimulationTestAccess::collide(simulation);
+        auto missed = simulation;
+        DropletSimulationTestAccess::splash(missed, {900, 1190});
+        require(missed.drops().size() == 1 && missed.drops()[0].id == 1,
+                "the old tapered tip below the rounded body must not remain as an invisible hit target");
+        DropletSimulationTestAccess::splash(simulation, {1078, 980});
+        require(simulation.drops().size() >= 3,
+                "the wide lower sides must remain clickable, including during a merge");
+        double volume = 0;
+        for (const auto &d : simulation.drops()) volume += d.volume;
+        near(volume, merging ? 16000000 : 8000000, "a belly click conserves the whole body's water");
+    }
+}
+
+void fallingProfileHasNoCreaseOutsideTheRim() {
+    for (Vec2 velocity : {Vec2{0, 120}, Vec2{120, 120}, Vec2{-120, 120}}) {
+        const auto lobe = bead(1, {}, 16, velocity).surface().lobes[0];
+        for (double side : {-1., 1.}) {
+            // Smooth unions turn exterior signed heights into visible liquid necks.
+            // Their normals must remain continuous where the width profile reaches either end.
+            const double y = side * lobe.halfExtent().y, epsilon = .0001;
+            const double center = lobe.distance({5, y});
+            const double leftSlope = (center - lobe.distance({5, y - epsilon})) / epsilon;
+            const double rightSlope = (lobe.distance({5, y + epsilon}) - center) / epsilon;
+            require(std::abs(leftSlope - rightSlope) < .001,
+                    "the gravity profile must not introduce a crease into a liquid neck");
+        }
+    }
+}
 }
 
 int main() {
@@ -210,6 +246,8 @@ int main() {
         {"clicking a merge without ghosts", clickingTheVisibleMergeSplitsWithoutGhosts},
         {"click-fragment liquid impact", clickFragmentsUseTheSameLiquidImpact},
         {"visible bottom-edge retirement", retirementWaitsForTheVisibleMergingSurface},
+        {"clicks follow the falling profile", clicksFollowTheBroadLowerBelly},
+        {"smooth falling-profile exterior", fallingProfileHasNoCreaseOutsideTheRim},
     };
     int failures = 0;
     for (const auto &[name, test] : tests) {
