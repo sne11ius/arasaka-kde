@@ -5,6 +5,9 @@
 #include <QDir>
 #include <window.h>
 #include <workspace.h>
+#include <main.h>
+#include <core/outputbackend.h>
+#include <core/backendoutput.h>
 
 class DragProbe : public QObject
 {
@@ -41,6 +44,20 @@ public:
         if (cancel) w->cancelInteractiveMoveResize();
         else w->endInteractiveMoveResize();
         return true;
+    }
+    Q_INVOKABLE Q_SCRIPTABLE bool removeOutput(const QString &name)
+    {
+        auto *backend = KWin::kwinApp()->outputBackend();
+        auto *output = backend->findOutput(name);
+        if (!output || backend->outputs().size() < 2) return false;
+        backend->removeVirtualOutput(output);
+        return backend->findOutput(name) == nullptr;
+    }
+    Q_INVOKABLE Q_SCRIPTABLE bool addOutput(const QString &name)
+    {
+        auto *backend = KWin::kwinApp()->outputBackend();
+        if (backend->findOutput(QStringLiteral("Virtual-") + name)) return false;
+        return backend->createVirtualOutput(name, QStringLiteral("Policy hotplug test"), QSize(1280, 900), 1) != nullptr;
     }
 private:
     KWin::Window *fixture(const QString &caption)

@@ -151,6 +151,49 @@ def child(run):
                      "cancelled drag retiles original output")
         check("dragging transfers between displays and retiles on drop or cancel", movement)
 
+        def hotplug():
+            def settled():
+                return evaluate("""
+                    const names = ["Policy SSD", "Policy CSD", "Policy Dialog"];
+                    const windows = workspace.windowList().filter(w => names.includes(w.caption));
+                    if (windows.length !== 3 || windows.some(w => !w.tile || w.minimized || !workspace.screens.includes(w.output))) return false;
+                    function leaves(tile) {
+                        if (!tile.tiles.length) return [tile];
+                        let result = [];
+                        for (const child of tile.tiles) result = result.concat(leaves(child));
+                        return result;
+                    }
+                    return workspace.screens.every(output => {
+                        const members = windows.filter(w => w.output === output);
+                        if (!members.length) return true;
+                        const tiles = leaves(workspace.rootTile(output, workspace.currentDesktop));
+                        return tiles.length === members.length && tiles.every(t => members.some(w => w.tile === t));
+                    });
+                """)
+
+            # A real backend removal destroys the QObject referenced by queued
+            # display events. Recreate the same connector twice to catch stale
+            # drivers keyed only by name, as well as the stuck processing flag.
+            assert dbus("/PolicyDragProbe", "org.arasaka.TestDrag.addOutput", "PolicyHotplug") == "true"
+            wait_for(lambda: "Virtual-PolicyHotplug" in evaluate("return workspace.screens.map(s => s.name);"),
+                     "temporary output appears")
+            for _ in range(2):
+                action("Policy SSD", 'workspace.sendClientToScreen(w, workspace.screens.find(s => s.name === "Virtual-PolicyHotplug"))')
+                wait_for(lambda: window("Policy SSD")["output"] == "Virtual-PolicyHotplug" and settled(),
+                         "fixture tiles on hotplug output")
+                assert dbus("/PolicyDragProbe", "org.arasaka.TestDrag.removeOutput", "Virtual-PolicyHotplug") == "true"
+                wait_for(settled, "all windows retile after output removal", 4)
+                action("Policy CSD", "w.minimized = true")
+                action("Policy CSD", "w.minimized = false")
+                wait_for(settled, "tiler still processes events after output removal", 4)
+                assert dbus("/PolicyDragProbe", "org.arasaka.TestDrag.addOutput", "PolicyHotplug") == "true"
+                wait_for(lambda: "Virtual-PolicyHotplug" in evaluate("return workspace.screens.map(s => s.name);"),
+                         "same connector reappears")
+                wait_for(settled, "all windows retile after same-connector recreation", 4)
+            assert dbus("/PolicyDragProbe", "org.arasaka.TestDrag.removeOutput", "Virtual-PolicyHotplug") == "true"
+            wait_for(settled, "layout settles after hotplug cleanup", 4)
+        check("removed and recreated outputs do not stall tiling", hotplug)
+
         def resizing():
             before = window("Policy CSD")["frame"]
             action("Policy CSD", "workspace.activeWindow = w; workspace.slotWindowResize()")

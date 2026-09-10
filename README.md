@@ -400,6 +400,13 @@ adjacent tiles, **Super+Shift+H/J/K/L** rearranges windows, and
 **Super+Ctrl+H/J/K/L** resizes shared tile boundaries. The per-output settings menu
 and alternative layout engines are disabled for this managed policy.
 
+Display removal/reconnection rebuilds the automatic trees from current window
+membership. Output identity is checked against KWin's live outputs, including
+when a connector returns with a new native object after resume. Retired tile
+callbacks are disconnected. A failed output rebuild is contained and event
+processing always releases its busy flag, so one exception cannot permanently
+disable subsequent tiling updates.
+
 **The only floating application window is the Stream Deck Quake Konsole.** The
 native helper watches `/tmp/konsole-quake.pid`, verifies ownership and the running
 Konsole executable, and selects one non-transient top-level window from that
@@ -467,8 +474,16 @@ cross-display dragging on two virtual outputs, same-display drops and cancellati
 resize/maximize/fullscreen rejection, minimize/restore, manual detach, all-activity
 windows, PID validation and registration, and reloads with existing/minimized windows. Test
 artifacts remain under `/tmp/opencode/window-policy-*`; the live home and session
-are not used. KWin 6.7.4's isolated compositor and the running 6.7.2 session have
+are not used. The suite also removes and recreates a virtual output twice,
+checking that occupied outputs have no empty tile branches and that later window
+events still work. KWin 6.7.4's isolated compositor and the running 6.7.2 session have
 identical window/workspace API headers for this helper.
+
+`python3 tests/polonium_controller_test.py` runs the adapted pinned controller and
+layout engine under Node.js, with the native KWin boundary simulated. It covers
+retired output references, exception recovery, same-name output recreation,
+topology/event ordering, and callback cleanup across repeated hotplug. This test
+also runs under `make test` and requires Node.js and the component fetch tools.
 
 Applied in the live session on 2026-09-10. Readback confirmed the existing Quake
 process remained the sole floating application while Firefox, Mattermost, Edge
@@ -478,6 +493,16 @@ isolated suite passed cross-display dragging, same-output drops and cancellation
 The original pre-policy backup is
 `$HOME/.local/state/arasaka-kde/backups/window-policy-ldr9wud3/`; later reapply
 backups contain already-managed settings.
+
+A later suspend/resume on 2026-09-10 exposed a retired-output reference that
+stalled Polonium's event gate and left stale/untiled windows. The topology and
+event-cleanup repair above was deployed that evening. Seven controller
+regressions and all fifteen isolated KWin checks passed; live readback confirmed
+visible application windows tiled with no empty branches on either occupied
+display. The repair backup is
+`$HOME/.local/state/arasaka-kde/backups/window-policy-gqnr2kik/`.
+Physical suspend/resume remains a check at the next normal user-initiated sleep;
+the automated suite exercises real output destruction/recreation in isolation.
 
 ## Authentication Prompts
 

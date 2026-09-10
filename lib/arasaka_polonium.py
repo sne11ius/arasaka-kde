@@ -128,7 +128,95 @@ def adapt(package):
   }
 """)
     replace("        driver.buildLayout(rootTile, display);",
-            "        rootTile.padding = 8;\n        driver.buildLayout(rootTile, display);")
+             "        rootTile.padding = 8;\n        driver.buildLayout(rootTile, display);")
+    # Output QObjects can be destroyed while a rebuild is queued (especially
+    # across suspend/resume). A non-null JS wrapper is not proof of validity.
+    # Never pass retired objects to KWin, and never leave the event gate latched
+    # if a native call or an individual output's layout rebuild throws.
+    method("  processEvents() {", "  // returns a list of displays", """  processEvents() {
+    this.processingEvents = true;
+    try {
+      const queue = simplifyEvents(this.eventQueue);
+      this.eventQueue = new Queue();
+      const rebuildDisplays = new Map();
+      while (!queue.isEmpty) {
+        const ev = queue.pop();
+        if (ev === undefined) break;
+        for (const display of this.handleEvent(ev)) {
+          if (this.isCurrentDisplay(display)) rebuildDisplays.set(display.toSymbol(), display);
+        }
+      }
+      // getDriver can discover topology while handling another event. Keep its
+      // rebuild obligation even when the caller ignores updateDrivers' return.
+      for (const display of this.dirtyDisplays ?? []) {
+        if (this.isCurrentDisplay(display)) rebuildDisplays.set(display.toSymbol(), display);
+      }
+      this.dirtyDisplays = [];
+      for (const display of rebuildDisplays.values()) {
+        if (!this.isCurrentDisplay(display) || display.activity !== this.workspace.currentActivity) continue;
+        try {
+          const driver = this.getDriver(display);
+          if (!driver) continue;
+          const rootTile = this.workspace.rootTile(display.output, display.desktop);
+          if (!rootTile) continue;
+          rootTile.padding = 8;
+          driver.buildLayout(rootTile, display);
+        } catch (error) {
+          console().error("display rebuild failed", error.message);
+        }
+      }
+      const postQueue = simplifyPostEvents(this.postEventQueue);
+      this.postEventQueue = new Queue();
+      while (!postQueue.isEmpty) {
+        const ev = postQueue.pop();
+        if (ev === undefined) break;
+        this.handlePostEvent(ev);
+      }
+    } finally {
+      this.processingEvents = false;
+    }
+  }
+""")
+    method("  updateDrivers() {\n    const ret = [];", "  displaysToRebuild() {", """  isCurrentDisplay(display) {
+    return display && this.workspace.screens.includes(display.output)
+      && this.workspace.desktops.includes(display.desktop)
+      && this.workspace.activities.includes(display.activity);
+  }
+  updateDrivers() {
+    const displays = [...Display.generate(this.workspace.desktops, this.workspace.activities, this.workspace.screens)];
+    const previous = this.knownDisplays ?? [];
+    if (previous.length === displays.length && displays.every(d => previous.some(p => d.equals(p)))) return [];
+    this.knownDisplays = displays;
+    this.dirtyDisplays = displays;
+    if (!this.processingEvents) this.eventTimer.start();
+    // Connector names may be reused with entirely new QObjects/root tiles.
+    // Reconstruct membership from live windows, not the retired layout trees.
+    for (const driver of this.drivers.values()) disconnectPolicySignals(driver);
+    this.drivers.clear();
+    for (const display of displays) {
+      this.drivers.set(display.toSymbol(), new Driver(config().defaultEngine));
+    }
+    this.previousDisplays.clear();
+    for (const window of Array.from(this.windowHandlers.keys())) {
+      if (!this.windowExists(window)) {
+        this.windowHandlers.delete(window);
+        continue;
+      }
+      const current = [...Display.generateWindow(window)].filter(d => this.isCurrentDisplay(d));
+      this.previousDisplays.set(window, current);
+      for (const display of current) {
+        const driver = this.drivers.get(display.toSymbol());
+        if (policy().tiles(window) && !window.minimized && !window.move) driver.addWindow(window);
+        else driver.addWindowUntiled(window);
+      }
+    }
+    return displays;
+  }
+""")
+    replace("  getDriver(display) {\n    let id;",
+            "  getDriver(display) {\n"
+            "    if (typeof display === 'object' && !this.isCurrentDisplay(display)) return undefined;\n"
+            "    let id;")
     replace("        if (kwinWindow.tile !== kwinTile) kwinTile.manage(kwinWindow);",
             "        if (kwinWindow.tile !== kwinTile && !kwinTile.manage(kwinWindow)) {\n"
             '          console().error("KWin refused tile membership for", kwinWindow.resourceClass);\n'
@@ -164,18 +252,30 @@ function setUntiledProps(window) {
     code, count = re.subn(r"([\w.()]+)\.connect\(([\s\S]*?)\);", r"connectPolicySignal(\1, \2);", code)
     if count != connections:
         raise ValueError("Unrecognized Polonium signal subscription")
-    code = """const signalConnections = [];
-function connectPolicySignal(signal, callback) {
+    # Retiring a driver also retires its callbacks on surviving output tiles.
+    for callback in ("updateTileSizesCallback", "updateTileCountCallback"):
+        code = replace_once(code, f"this.{callback}.bind(this, display)\n        );",
+                            f"this.{callback}.bind(this, display), this\n        );")
+    code = """const signalConnections = new Set();
+function connectPolicySignal(signal, callback, owner) {
   signal.connect(callback);
-  signalConnections.push([signal, callback]);
+  signalConnections.add([signal, callback, owner]);
+}
+function disconnectPolicySignals(owner) {
+  // Qt 6.10's JS Set iterator skips entries when the current one is deleted.
+  // Iterate a snapshot so teardown disconnects every callback, including reloads.
+  for (const connection of Array.from(signalConnections)) {
+    const [signal, callback, connectionOwner] = connection;
+    if (owner !== undefined && connectionOwner !== owner) continue;
+    try { signal.disconnect(callback); } catch (_) {} // closed windows/tiles
+    signalConnections.delete(connection);
+  }
 }
 function reconcileForcedPolicy() {
   for (const handler of controller().windowHandlers.values()) handler.updateForcedState();
 }
 function stop() {
-  for (const [signal, callback] of signalConnections.splice(0)) {
-    try { signal.disconnect(callback); } catch (_) {} // closed windows/tiles
-  }
+  disconnectPolicySignals();
   controller().eventTimer.stop();
 }
 """ + code
