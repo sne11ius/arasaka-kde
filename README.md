@@ -400,6 +400,10 @@ adjacent tiles, **Super+Shift+H/J/K/L** rearranges windows, and
 **Super+Ctrl+H/J/K/L** resizes shared tile boundaries. The per-output settings menu
 and alternative layout engines are disabled for this managed policy.
 
+**GeForce NOW is allowed to enter fullscreen.** Its `GeForceNOW` application
+window leaves the tiling layout while fullscreen and automatically rejoins it
+when fullscreen ends.
+
 Display removal/reconnection rebuilds the automatic trees from current window
 membership. Output identity is checked against KWin's live outputs, including
 when a connector returns with a new native object after resume. Retired tile

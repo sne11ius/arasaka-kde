@@ -21,6 +21,12 @@ bool applicationWindow(KWin::Window *w)
     return w && !w->isDeleted() && !w->isPopupWindow()
         && (w->isNormalWindow() || w->isDialog());
 }
+
+bool fullscreenException(KWin::Window *w)
+{
+    return applicationWindow(w) && w->isFullScreen()
+        && w->resourceClass() == QStringLiteral("GeForceNOW");
+}
 }
 
 WindowPolicy::WindowPolicy(QObject *parent) : QObject(parent)
@@ -63,6 +69,7 @@ QString WindowPolicy::report() const
             {"quake", isQuake(w)}, {"tiled", w->requestedTile() != nullptr},
             {"minimized", w->isMinimized()}, {"maximized", int(w->maximizeMode())},
             {"fullscreen", w->isFullScreen()}, {"moving", w->isInteractiveMove()},
+            {"fullscreenException", fullscreenException(w)},
             {"resizing", w->isInteractiveResize()}, {"noBorder", w->noBorder()},
             {"keepAbove", w->keepAbove()}
         });
@@ -125,7 +132,7 @@ bool WindowPolicy::isQuake(QObject *window) const
 bool WindowPolicy::tiles(QObject *window) const
 {
     auto *w = qobject_cast<KWin::Window *>(window);
-    return applicationWindow(w) && !isQuake(w);
+    return applicationWindow(w) && !isQuake(w) && !fullscreenException(w);
 }
 
 void WindowPolicy::watch(KWin::Window *w)

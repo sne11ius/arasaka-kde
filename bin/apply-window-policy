@@ -63,6 +63,7 @@ def wait_for_policy(version, native_revision):
             last = report
             if report["version"] == version and report["nativeRevision"] == native_revision and all(
                 (w["quake"] and not w["tiled"] and w["noBorder"] and w["keepAbove"])
+                or (w.get("fullscreenException", False) and w["fullscreen"] and not w["tiled"])
                 or (not w["quake"] and (w["minimized"] or w["tiled"])
                     and not (w["maximized"] or w["fullscreen"] or w["moving"] or w["resizing"]))
                 for w in report["windows"]
