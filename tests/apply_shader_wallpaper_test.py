@@ -2,6 +2,7 @@ import difflib
 import hashlib
 import json
 import os
+import runpy
 from pathlib import Path
 import shutil
 import struct
@@ -104,8 +105,10 @@ class ShaderWallpaperScriptTests(unittest.TestCase):
             {"id": 42, "screen": 2, "wallpaperPlugin": "org.kde.image", "config": {}},
         ]
 
-    def run_template(self, desktops, ensure_only=True, connectors=("eDP-1", "HDMI-A-1", "DP-1"), phase=None, **env):
+    def run_template(self, desktops, ensure_only=True, connectors=("eDP-1", "HDMI-A-1", "DP-1"), phase=None, defaults=None, **env):
         script = (ROOT / "plasma/shader-wallpaper.js").read_text()
+        defaults = defaults or json.loads((ROOT / "plasma/wallpaper-defaults.json").read_text())
+        script = script.replace("__WALLPAPER_DEFAULTS_JSON__", json.dumps(defaults))
         for key, value in {"DATA_HOME": str(self.data), "PRIMARY_CONNECTOR": "HDMI-A-1",
                            "ENABLED_CONNECTORS": connectors}.items():
             script = script.replace(f"__{key}_JSON__", json.dumps(value))
@@ -166,6 +169,36 @@ class ShaderWallpaperScriptTests(unittest.TestCase):
                 {"id": 42, "screen": 2, "wallpaperPlugin": PLUGIN, "preserved": True},
             ],
         })
+
+    def test_login_defaults_match_activated_desktop_effect_and_interaction(self):
+        output, desktops, _ = self.run_template(self.desktops, ensure_only=False)
+        self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
+        login = runpy.run_path(str(ROOT / "bin/apply-plm"))["SHADER"]
+        desktop = desktops[1]["config"]
+        for key, value in login.items():
+            if key == "pauseMode":
+                self.assertEqual(value, "3")
+                self.assertEqual(desktop[key], 0)
+            elif key in ("selectedShaderPath", "iChannel0"):
+                self.assertEqual(Path(value).name, Path(desktop[key]).name)
+            else:
+                actual = desktop.get(key, False if key == "watchSourceFile" else None)
+                if isinstance(actual, bool):
+                    actual = str(actual).lower()
+                elif isinstance(actual, list):
+                    actual = ",".join(actual)
+                self.assertEqual(value, str(actual), key)
+
+    def test_shared_profile_changes_reach_every_activated_desktop(self):
+        defaults = json.loads((ROOT / "plasma/wallpaper-defaults.json").read_text())
+        defaults.update(targetFps=45, shaderSpeed=.5, mouseEnabled=False, iChannel0="new-artwork.png")
+        output, desktops, _ = self.run_template(self.desktops, ensure_only=False, defaults=defaults)
+        self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
+        for desktop in desktops:
+            self.assertEqual(desktop["config"]["mouseEnabled"], False)
+            self.assertEqual(desktop["config"]["targetFps"], 45)
+            self.assertEqual(desktop["config"]["shaderSpeed"], .5)
+            self.assertEqual(desktop["config"]["iChannel0"], (self.data / "wallpapers/Arasaka/new-artwork.png").as_uri())
 
     def test_missing_secondary_coverage_fails_before_any_writes_in_both_modes(self):
         for ensure_only in (True, False):
@@ -332,7 +365,7 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
             directory.mkdir(parents=True, exist_ok=True)
         for relative in ("bin/fetch-components", "lib/common.sh", "lib/arasaka_topology.py",
                          "assets/wallpapers/mikoshi-16x9.svg", "assets/wallpapers/mikoshi-16x10.svg",
-                         "bin/apply-shader-wallpaper", "plasma/shader-wallpaper.js"):
+                         "bin/apply-shader-wallpaper", "bin/reconcile-displays", "plasma/shader-wallpaper.js", "plasma/wallpaper-defaults.json"):
             if (ROOT / relative).exists():
                 shutil.copy2(ROOT / relative, self.repo / relative)
         # A tiny real CMake build models upstream's embedded native plugin output.
@@ -654,6 +687,37 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("symlink", result.stderr.lower())
         self.assertEqual(list(elsewhere.iterdir()), [])
+
+    def test_refresh_updates_existing_desktops_and_the_published_hotplug_profile(self):
+        profile = self.repo / "plasma/wallpaper-defaults.json"
+        defaults = json.loads(profile.read_text())
+        defaults.update(targetFps=45, shaderSpeed=.5)
+        profile.write_text(json.dumps(defaults))
+        result = self.run_installer()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        for desktop in json.loads(Path(self.env["DESKTOP_STATE"]).read_text()):
+            self.assertEqual(desktop["config"]["targetFps"], 45)
+            self.assertEqual(desktop["config"]["shaderSpeed"], .5)
+        runtime = self.home / ".local/libexec/arasaka-kde"
+        self.assertTrue((runtime / "wallpaper-defaults.json").is_file(), "background refresh must publish hotplug defaults")
+        self.assertTrue((runtime / "reconcile-displays").is_file())
+        script = (runtime / "shader-wallpaper.js").read_text()
+        values = {"WALLPAPER_DEFAULTS": json.loads((runtime / "wallpaper-defaults.json").read_text()),
+                  "DATA_HOME": str(self.data), "PRIMARY_CONNECTOR": "HDMI-A-1", "ENABLED_CONNECTORS": ["HDMI-A-1"]}
+        for key, value in values.items():
+            script = script.replace(f"__{key}_JSON__", json.dumps(value))
+        script = script.replace("__ENSURE_ONLY__", "true")
+        Path(self.env["DESKTOP_STATE"]).write_text(json.dumps([
+            {"id": 77, "screen": 1, "wallpaperPlugin": "org.kde.image", "config": {}}]))
+        for phase in ("prepare", "activate"):
+            result = subprocess.run(["node", "-e", PLASMA, script.replace("__SHADER_PHASE__", phase)],
+                                    env=self.env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(result.stdout.startswith("ARASAKA_SHADER_WALLPAPER="), result.stdout)
+        config = json.loads(Path(self.env["DESKTOP_STATE"]).read_text())[0]["config"]
+        self.assertEqual(config["targetFps"], 45)
+        self.assertEqual(config["shaderSpeed"], .5)
+        self.assertTrue(config["mouseEnabled"])
 
     def test_install_only_still_backs_up_but_leaves_desktop_state_untouched(self):
         self.seed_previous_install()

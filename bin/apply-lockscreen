@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configure lock-screen Interactive Rain with passive hover and no clock; never lock or restart."""
+"""Apply the shared background to the locker, or with --login to PLM; preserve clock and lock policy."""
 
 import argparse
 from datetime import datetime
@@ -35,18 +35,32 @@ def read_config(path, groups, key, default=""):
     return subprocess.check_output([*command, "--key", key, "--default", default], text=True).rstrip("\n")
 
 
-def main():
-    argparse.ArgumentParser(description=__doc__).parse_args()
-    if os.geteuid() == 0:
-        raise ValueError("run apply-lockscreen as the desktop user, without sudo")
-    for tool in ("kreadconfig6", "kwriteconfig6", "ldd"):
-        if not shutil.which(tool):
-            raise ValueError(f"required command not found: {tool}")
+def host_paths(login):
+    if login:
+        return Path("/usr/share"), Path("/etc"), Path("/etc/plasmalogin.conf"), Path("/var/backups/arasaka-kde")
     home = Path(os.environ["HOME"])
     data = Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share")
     config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
     backups = Path(os.environ.get("XDG_STATE_HOME") or home / ".local/state") / "arasaka-kde/backups"
-    target = config / "kscreenlockerrc"
+    return data, config, config / "kscreenlockerrc", backups
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--login", action="store_true", help="configure system PLM appearance (run yourself with sudo)")
+    args = parser.parse_args()
+    if args.login and os.geteuid() != 0:
+        raise ValueError("run apply-lockscreen --login yourself with sudo, after installing the two PLM packages")
+    if not args.login and os.geteuid() == 0:
+        raise ValueError("run apply-lockscreen as the desktop user, without sudo")
+    if args.login:
+        version = subprocess.check_output(["dpkg-query", "-W", "-f=${Version}", "plasmalogin"], text=True).strip()
+        if version != "6.7.4-0arasaka2":
+            raise ValueError("installed PLM lacks the pointer bridge; install the newly built plasmalogin package first")
+    for tool in ("kreadconfig6", "kwriteconfig6", "ldd"):
+        if not shutil.which(tool):
+            raise ValueError(f"required command not found: {tool}")
+    data, config, target, backups = host_paths(args.login)
     for path in (target, backups):
         check_path(path)
     if target.exists() and not target.is_file():
@@ -54,8 +68,11 @@ def main():
 
     package = data / "plasma/wallpapers" / PLUGIN
     artwork = data / "wallpapers/Arasaka"
-    shader = artwork / "shaders/Interactive_Rain.frag"
-    texture = artwork / "mikoshi-16x9.png"
+    defaults_path = Path(__file__).resolve().parents[1] / "plasma/wallpaper-defaults.json"
+    check_path(defaults_path)
+    defaults = json.loads(defaults_path.read_text())
+    shader = artwork / defaults["selectedShaderPath"]
+    texture = artwork / defaults["iChannel0"]
     native = package / "contents/ui/shaderwallpaper/libshaderwallpaperplugin.so"
     inputs = [shader, texture, native, package / "metadata.json", package / "contents/config/main.xml",
               package / "contents/ui/main.qml", package / "contents/ui/ShaderSystem.qml",
@@ -88,35 +105,17 @@ def main():
             r'\bread\s*:\s*"rainLockScreenHost"', r'\bwrite\s*:\s*"setRainLockScreenHost"'))
             and not re.search(r"\bisReadonly\s*:\s*true\b", prop) for prop in properties):
         raise ValueError("installed native renderer lacks rainLockScreenHost; rebuild/install the shader wallpaper first")
+    if not any(re.search(r'\bname\s*:\s*"rainGreeterInteractionVersion"', prop)
+               and re.search(r'\btype\s*:\s*"int"', prop) for prop in properties):
+        raise ValueError("installed native renderer lacks rainGreeterInteractionVersion; rebuild/install the shader wallpaper first")
 
-    shell = read_config(config / "plasmashellrc", ["Shell"], "ShellPackage",
-                        os.environ.get("PLASMA_DEFAULT_SHELL") or "org.kde.plasma.desktop")
-    if not re.fullmatch(r"[\w.-]+", shell):
-        raise ValueError("unexpected Plasma shell package identifier")
-    roots = [data, *map(Path, (os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":"))]
-    shell_root = next((root / "plasma/shells" / shell for root in roots
-                       if (root / "plasma/shells" / shell / "metadata.json").is_file()), None)
-    clock_schema = shell_root / "contents/lockscreen/config.xml" if shell_root else None
-    if clock_schema is None or not clock_schema.is_file() or not any(
-            entry.get("name") == "alwaysShowClock" for entry in ET.parse(clock_schema).getroot().findall(".//{*}entry")):
-        raise ValueError("active lock-screen theme does not declare alwaysShowClock")
-
-    settings = {
-        "selectedShaderPath": shader.as_uri(), "selectedShaderCode": "", "commonCode": "",
-        "running": "true", "shaderSpeed": "0.75", "targetFps": "30", "resolutionScale": "1",
-        "pauseMode": "3", "checkActiveScreen": "true", "excludeWindows": "",
-        "mouseEnabled": "true", "audioEnabled": "false", "windowsEnabled": "false",
-        "playlistEnabled": "false", "enableShaderTweaks": "false", "watchSourceFile": "false",
-        "useBufferA": "false", "useBufferB": "false", "useBufferC": "false", "useBufferD": "false",
-        "iChannel0Enabled": "true", "iChannel0": texture.as_uri(), "imageChannel0": "0",
-        "iChannel1Enabled": "false", "iChannel2Enabled": "false", "iChannel3Enabled": "false",
-        "imageChannel1": "-1", "imageChannel2": "-1", "imageChannel3": "-1",
-    }
+    settings = {key: str(value).lower() if isinstance(value, bool) else
+                ",".join(value) if isinstance(value, list) else str(value) for key, value in defaults.items()}
+    settings.update(selectedShaderPath=shader.as_uri(), iChannel0=texture.as_uri(), pauseMode="3")
     schema_keys = {entry.get("name") for entry in ET.parse(package / "contents/config/main.xml").getroot().findall(".//{*}entry")}
     if set(settings) - schema_keys:
         raise ValueError(f"installed shader schema is missing: {sorted(set(settings) - schema_keys)}")
-    groups = {"[Greeter]": {"WallpaperPlugin": PLUGIN},
-              "[Greeter][LnF][General]": {"alwaysShowClock": "false"},
+    groups = {"[Greeter]": {"WallpaperPluginId" if args.login else "WallpaperPlugin": PLUGIN},
               f"[Greeter][Wallpaper][{PLUGIN}][General]": settings}
     original = target.read_bytes() if target.exists() else b""
     original_stat = target.stat() if target.exists() else None
@@ -140,7 +139,7 @@ def main():
     configured = "".join(lines).encode("utf-8")
     config.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".arasaka-lockscreen-", dir=config) as temporary:
-        staged = Path(temporary) / "kscreenlockerrc"
+        staged = Path(temporary) / target.name
         staged.write_bytes(configured)
         staged.chmod(stat.S_IMODE(original_stat.st_mode) if original_stat else 0o600)
         for group, values in groups.items():
@@ -153,13 +152,13 @@ def main():
         if current_stat != original_stat or (target.read_bytes() if target.exists() else b"") != original:
             raise ValueError("lock-screen configuration changed concurrently; no settings replaced")
         backups.mkdir(parents=True, exist_ok=True)
-        backup = Path(tempfile.mkdtemp(prefix=f"lockscreen-{datetime.now():%Y%m%d-%H%M%S}-", dir=backups))
-        saved = backup / ("kscreenlockerrc" if original_stat else "kscreenlockerrc.missing")
+        backup = Path(tempfile.mkdtemp(prefix=f"{'login-wallpaper' if args.login else 'lockscreen'}-{datetime.now():%Y%m%d-%H%M%S}-", dir=backups))
+        saved = backup / (target.name if original_stat else target.name + ".missing")
         saved.write_bytes(original)
         saved.chmod(0o600)
-        print(f"Lock-screen backup: {backup}", flush=True)
+        print(f"Background configuration backup: {backup}", flush=True)
         # KConfig's own writer locks and merges each key with concurrent saves.
-        # Prepare the shader and clock first; select the plugin only after both succeed.
+        # Prepare the shader first; select the plugin only after all settings succeed.
         for group in reversed(groups):
             names = re.findall(r"\[([^\]]+)\]", group)
             for key, expected in groups[group].items():
@@ -170,9 +169,12 @@ def main():
                 subprocess.run([*command, "--key", key, "--", expected], check=True)
                 if read_config(target, names, key, "ARASAKA_MISSING") != expected:
                     raise ValueError(f"live KConfig readback differs: {group}/{key}; backup: {backup}")
-    print("Lock-screen configuration verified: Interactive Rain with passive hover, 30 FPS, 75% speed, no clock/date.")
-    print("Lock policy, authentication, desktop and PLM settings are unchanged. No lock, preview or restart was performed.")
-    print("The next lock-screen start will load the configuration; rendering remains unobserved.")
+        if args.login:
+            # KConfig creates a new root-owned file as 0600; the greeter must read it.
+            target.chmod(0o644)
+    print(f"{'Login' if args.login else 'Lock-screen'} configuration verified: shared Interactive Rain with hover and click splashes.")
+    print("Clock preference, lock policy and authentication preserved. No lock or restart performed.")
+    print("The next normal greeter start loads the updated renderer; live rendering remains to be checked.")
 
 
 if __name__ == "__main__":

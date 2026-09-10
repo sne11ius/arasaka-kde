@@ -91,6 +91,7 @@ def main():
         "arasaka_topology.py": repo / "lib/arasaka_topology.py",
         "layout.js": repo / "plasma/layout.js",
         "shader-wallpaper.js": repo / "plasma/shader-wallpaper.js",
+        "wallpaper-defaults.json": repo / "plasma/wallpaper-defaults.json",
         "Arasaka.json": repo / "theme/panel-colorizer/Arasaka.json",
     }
     for tool in ("kpackagetool6", "qdbus6", "systemctl", "kscreen-doctor", "bash",

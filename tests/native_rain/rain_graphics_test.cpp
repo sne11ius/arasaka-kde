@@ -742,14 +742,14 @@ private Q_SLOTS:
         }
         input.setLockScreenHost(true);
         click(window, {30, 25});
-        QVERIFY(input.takeSplashes().empty());
+        QCOMPARE(input.takeSplashes(), (std::vector<Vec2>{{30, 25}}));
         input.setLockScreenHost(false);
         QVERIFY(QMetaObject::invokeMethod(&input, "sessionLockChanged", Q_ARG(bool, true)));
         click(window, {30, 25});
         QVERIFY(input.takeSplashes().empty());
         input.setLockScreenHost(true);
         click(window, {30, 25});
-        QVERIFY(input.takeSplashes().empty());
+        QCOMPARE(input.takeSplashes(), (std::vector<Vec2>{{30, 25}}));
     }
 };
 

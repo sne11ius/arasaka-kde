@@ -2,7 +2,9 @@
 """Build the pinned wallpaper for user-local deployment or system package staging."""
 
 import argparse
+from contextlib import ExitStack
 from datetime import datetime
+import fcntl
 import filecmp
 import json
 import os
@@ -49,6 +51,9 @@ def main():
                        help="export system files to an empty absolute directory; no user deployment or session calls")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
+    defaults_path = repo / "plasma/wallpaper-defaults.json"
+    check_path(defaults_path)
+    defaults = json.loads(defaults_path.read_text())
     if args.stage_only:
         check_path(args.stage_only, directory=True)
         if args.stage_only.exists() and any(args.stage_only.iterdir()):
@@ -62,6 +67,10 @@ def main():
         config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
         state = Path(os.environ.get("XDG_STATE_HOME") or home / ".local/state") / "arasaka-kde"
         backups = state / "backups"
+        runtime = home / ".local/libexec/arasaka-kde"
+        runtime_sources = [(repo / "bin/reconcile-displays", runtime / "reconcile-displays"),
+                           (repo / "plasma/shader-wallpaper.js", runtime / "shader-wallpaper.js"),
+                           (defaults_path, runtime / defaults_path.name)]
     package_target = data / "plasma/wallpapers" / PLUGIN
     artwork = data / "wallpapers/Arasaka"
     jobs = os.environ.get("ARASAKA_SHADER_BUILD_JOBS", "4")
@@ -79,6 +88,7 @@ def main():
         sources += [(artwork / "shaders" / name, Path("artwork/shaders") / name, False) for name in (SHADER, RAIN)]
         sources += [(config / name, Path(name), False) for name in ("plasma-org.kde.plasma.desktop-appletsrc", "plasmashellrc")]
         sources += [(home / ".local/libexec/arasaka-kde/layout.js", Path("runtime/layout.js"), False)]
+        sources += [(target, Path("runtime") / target.name, False) for _, target in runtime_sources]
         check_path(backups, directory=True)
         for source, _, directory in sources:
             check_path(source, directory)
@@ -97,7 +107,7 @@ def main():
         inputs += [repo / "bin/fetch-components", repo / "lib/common.sh",
                    Path(os.environ.get("ARASAKA_COMPONENT_MANIFEST", str(repo / "manifest/components.tsv")))]
     else:
-        inputs += [repo / "plasma/shader-wallpaper.js", repo / "lib/arasaka_topology.py"]
+        inputs += [source for source, _ in runtime_sources] + [repo / "lib/arasaka_topology.py"]
     inputs += [repo / "assets/wallpapers" / f"{name}.svg" for name, _, _ in images]
     for path in inputs:
         check_path(path)
@@ -122,7 +132,7 @@ def main():
     dusti_code = passes[0].get("code", "")
     if not isinstance(dusti_code, str) or "mainImage" not in dusti_code or "mainImage" not in tokyo:
         raise ValueError("selectable shader source is missing its mainImage entry point")
-    with tempfile.TemporaryDirectory(prefix="arasaka-shader-wallpaper-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="arasaka-shader-wallpaper-") as temporary, ExitStack() as deployment:
         stage = Path(temporary)
         if args.stage_only:
             check_path(stage, directory=True)
@@ -337,10 +347,18 @@ def main():
             if not plan.get("primary"):
                 raise ValueError("no primary connector in current display topology")
             values = {"DATA_HOME": str(data), "PRIMARY_CONNECTOR": plan["primary"],
-                      "ENABLED_CONNECTORS": json.loads(plan["signature"])["enabled"]}
-            script = re.sub(r"__(DATA_HOME|PRIMARY_CONNECTOR|ENABLED_CONNECTORS)_JSON__", lambda match: json.dumps(values[match[1]]),
+                       "ENABLED_CONNECTORS": json.loads(plan["signature"])["enabled"], "WALLPAPER_DEFAULTS": defaults}
+            script = re.sub(r"__(DATA_HOME|PRIMARY_CONNECTOR|ENABLED_CONNECTORS|WALLPAPER_DEFAULTS)_JSON__", lambda match: json.dumps(values[match[1]]),
                             (repo / "plasma/shader-wallpaper.js").read_text())
 
+        replacements += runtime_sources
+        # Publish matching scripts/defaults while excluding the installed watcher
+        # with its existing lock. The launcher's layout is not rewritten.
+        check_path(state, directory=True)
+        state.mkdir(parents=True, exist_ok=True)
+        check_path(state / "reconcile.lock")
+        lock = deployment.enter_context((state / "reconcile.lock").open("w"))
+        fcntl.flock(lock, fcntl.LOCK_EX)
         # Back up all sources before replacing any of them, including existing runtime policy.
         for path, _, directory in sources:
             check_path(path, directory)
@@ -387,18 +405,11 @@ def main():
                     raise ValueError(f"invalid desktop verification result: {output}")
                 for desktop in desktops:
                     settings = desktop["config"]
-                    image = "mikoshi-16x9.png" if desktop["screen"] == report["primaryScreen"] else "mikoshi-16x10.png"
-                    expected = {
-                        "selectedShaderPath": (artwork / "shaders" / RAIN).as_uri(), "selectedShaderCode": "",
-                        "iChannel0": (artwork / image).as_uri(), "iChannel0Enabled": True, "imageChannel0": 0,
-                        "running": True, "shaderSpeed": 0.75, "targetFps": 30, "resolutionScale": 1,
-                        "pauseMode": 0, "checkActiveScreen": True, "excludeWindows": [],
-                        "mouseEnabled": phase == "activate", "audioEnabled": False, "windowsEnabled": False,
-                        "playlistEnabled": False, "enableShaderTweaks": False, "commonCode": "",
-                        "useBufferA": False, "useBufferB": False, "useBufferC": False, "useBufferD": False,
-                        "iChannel1Enabled": False, "iChannel2Enabled": False, "iChannel3Enabled": False,
-                        "imageChannel1": -1, "imageChannel2": -1, "imageChannel3": -1,
-                    }
+                    image = defaults["iChannel0"]
+                    if desktop["screen"] != report["primaryScreen"] and image == "mikoshi-16x9.png":
+                        image = "mikoshi-16x10.png"
+                    expected = dict(defaults, selectedShaderPath=(artwork / defaults["selectedShaderPath"]).as_uri(),
+                                    iChannel0=(artwork / image).as_uri(), mouseEnabled=phase == "activate" and defaults["mouseEnabled"])
                     if (desktop["wallpaperPlugin"] != PLUGIN or not isinstance(settings, dict)
                             or any(settings.get(key) != value for key, value in expected.items())):
                         raise ValueError(f"unexpected wallpaper verification result: {output}")

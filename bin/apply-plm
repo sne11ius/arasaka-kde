@@ -34,7 +34,7 @@ DEFAULT = Path("/etc/X11/default-display-manager")
 ALIAS = Path("/etc/systemd/system/display-manager.service")
 CONFIG = Path("/etc/plasmalogin.conf")
 QUESTION = "shared/default-x-display-manager"
-PACKAGES = {"plasmalogin": "6.7.4-0arasaka1", "arasaka-login-wallpaper": "1.0-1"}
+PACKAGES = {"plasmalogin": "6.7.4-0arasaka2", "arasaka-login-wallpaper": "1.0-1"}
 BASELINE_FILES = ("user-files.json", "desktop-shader.json", "packages-before-build.tsv",
                   "package-provenance.json", "dependency-install-transaction.txt",
                   "packages-before-dependencies.reconstructed.tsv")
@@ -52,11 +52,11 @@ PAM_HASHES = {
     "plasmalogin-greeter": "ef76e697854683ab5650970dfac2dd05c52e28101c8a9dbdb7058a66b7937349",
 }
 SHADER = {
-    "selectedShaderPath": "file:///usr/share/wallpapers/Arasaka/shaders/Heartfelt_No_Heart.frag",
+    "selectedShaderPath": "file:///usr/share/wallpapers/Arasaka/shaders/Interactive_Rain.frag",
     "selectedShaderCode": "", "commonCode": "", "running": "true",
     "shaderSpeed": "0.75", "targetFps": "30", "resolutionScale": "1",
     "pauseMode": "3", "checkActiveScreen": "true", "excludeWindows": "",
-    "mouseEnabled": "false", "audioEnabled": "false", "windowsEnabled": "false",
+    "mouseEnabled": "true", "audioEnabled": "false", "windowsEnabled": "false",
     "playlistEnabled": "false", "enableShaderTweaks": "false", "watchSourceFile": "false",
     "useBufferA": "false", "useBufferB": "false", "useBufferC": "false", "useBufferD": "false",
     "iChannel0Enabled": "true", "iChannel0": "file:///usr/share/wallpapers/Arasaka/mikoshi-16x9.png",
@@ -252,7 +252,7 @@ print(JSON.stringify(result));""" % (json.dumps(DESKTOP_KEYS), json.dumps(PLUGIN
     for desktop in state:
         expected = {key: SHADER[key] for key in DESKTOP_KEYS if key != "iChannel0"}
         expected["pauseMode"] = "0"
-        expected["selectedShaderPath"] = (home / ".local/share/wallpapers/Arasaka/shaders/Heartfelt_No_Heart.frag").as_uri()
+        expected["selectedShaderPath"] = (home / ".local/share/wallpapers/Arasaka/shaders/Interactive_Rain.frag").as_uri()
         mismatches = [key for key, value in expected.items() if desktop["config"].get(key) != value]
         if desktop["config"].get("iChannel0") not in textures:
             mismatches.append("iChannel0")

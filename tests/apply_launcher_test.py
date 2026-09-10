@@ -117,6 +117,7 @@ class ApplyLauncherTest(unittest.TestCase):
                    'var launcherSession = "__LAUNCHER_SESSION__";\n'
                    'var hideDesktopIcons = __HIDE_DESKTOP_ICONS__;\n')
         self.write(self.repo / "plasma/shader-wallpaper.js", (ROOT / "plasma/shader-wallpaper.js").read_text())
+        self.write(self.repo / "plasma/wallpaper-defaults.json", (ROOT / "plasma/wallpaper-defaults.json").read_text())
         self.write(self.repo / "theme/panel-colorizer/Arasaka.json", '{"fixture": true}\n')
         self.source_package = self.repo / "plasma/applets" / PLUGIN
         self.write(self.source_package / "metadata.json", json.dumps({

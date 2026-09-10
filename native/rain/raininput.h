@@ -17,6 +17,7 @@ public:
     explicit RainInput(QQuickItem *item);
     ~RainInput() override;
     void setEnabled(bool enabled);
+    // Historical interface name: this role covers both the locker and PLM greeter.
     void setLockScreenHost(bool lockScreenHost);
     void invalidate();
     void refreshGeometry();

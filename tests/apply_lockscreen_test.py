@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -30,7 +31,9 @@ class ApplyLockscreenTest(unittest.TestCase):
         self.types.write_text('import QtQuick.tooling 1.2\nModule { Component { name: "ShaderEngine"\n'
                               'Property { name: "rainLockScreenHost"; type: "bool"; '
                               'read: "rainLockScreenHost"; write: "setRainLockScreenHost"; '
-                              'notify: "rainLockScreenHostChanged" } } }\n')
+                              'notify: "rainLockScreenHostChanged" } '
+                              'Property { name: "rainGreeterInteractionVersion"; type: "int"; '
+                              'read: "rainGreeterInteractionVersion"; isReadonly: true } } }\n')
         # Only installed assets are fixtures; dependency resolution and KConfig are real.
         subprocess.run(["c++", "-shared", "-fPIC", "-x", "c++", "-", "-o",
                         str(self.native / "libshaderwallpaperplugin.so")],
@@ -111,7 +114,7 @@ class ApplyLockscreenTest(unittest.TestCase):
         for key, value in self.expected.items():
             self.assertEqual(self.read(GROUP, key), value, key)
         self.assertEqual(self.read(["Greeter"], "WallpaperPlugin"), PLUGIN)
-        self.assertEqual(self.read(["Greeter", "LnF", "General"], "alwaysShowClock"), "false")
+        self.assertEqual(self.read(["Greeter", "LnF", "General"], "alwaysShowClock"), "true")
         for group, key, value in [(["Daemon"], "Autolock", "true"), (["Daemon"], "Timeout", "7"),
                                   (["Daemon"], "LockOnResume", "true"), (["Daemon"], "CustomPolicy", "keep"),
                                   (["Greeter"], "UnknownGreeter", "keep"),
@@ -129,7 +132,7 @@ class ApplyLockscreenTest(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(saved.stat().st_mode), 0o600)
         writes = [json.loads(line) for line in self.writes.read_text().splitlines()]
         self.assertEqual(writes[-1][-6:], ["--group", "Greeter", "--key", "WallpaperPlugin", "--", PLUGIN])
-        self.assertEqual(len(writes), len(self.expected) + 2)
+        self.assertEqual(len(writes), len(self.expected) + 1)
         applied = self.target.read_bytes()
         result = self.apply()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -137,11 +140,13 @@ class ApplyLockscreenTest(unittest.TestCase):
         self.assertEqual(saved.read_text(), self.original)
 
     def test_old_capability_missing_assets_and_inexact_marker_reject_before_writes(self):
-        for kind in ("old-capability", "readonly-capability", "wrong-type", "missing-types", "missing-rain", "inexact-marker"):
+        for kind in ("old-capability", "hover-only", "readonly-capability", "wrong-type", "missing-types", "missing-rain", "inexact-marker"):
             with self.subTest(kind=kind):
                 types, shader = self.types.read_bytes(), self.shader.read_bytes()
                 if kind == "old-capability":
                     self.types.write_text('Module { Component { name: "ShaderEngine" } }\n')
+                elif kind == "hover-only":
+                    self.types.write_bytes(types.replace(b"rainGreeterInteractionVersion", b"unrelatedVersion"))
                 elif kind == "readonly-capability":
                     self.types.write_bytes(types.replace(b'write: "setRainLockScreenHost";', b'isReadonly: true;'))
                 elif kind == "wrong-type":
@@ -156,10 +161,55 @@ class ApplyLockscreenTest(unittest.TestCase):
                 self.types.write_bytes(types)
                 self.shader.write_bytes(shader)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
-                self.assertRegex(result.stderr, "rainLockScreenHost|native.rain marker|missing or unreadable")
+                self.assertRegex(result.stderr, "rainLockScreenHost|rainGreeterInteractionVersion|native.rain marker|missing or unreadable")
                 self.assertEqual(self.target.read_text(), self.original)
                 self.assertFalse(self.writes.exists())
                 self.assertFalse((self.home / "state").exists())
+
+    def test_login_background_uses_shared_settings_and_preserves_authentication_and_clock(self):
+        self.target = self.config / "plasmalogin.conf"
+        original = ("[Autologin]\nUser=\nSession=\nRelogin=false\n\n"
+                    "[Greeter]\nShowClock=false\nPreselectedUser=keep\nPreselectedSession=plasma.desktop\n"
+                    "WallpaperPluginId=org.kde.image\n")
+        self.target.write_text(original)
+        query = self.home / "tools/dpkg-query"
+        query.write_text('#!/bin/sh\nprintf "6.7.4-0arasaka2"\n')
+        query.chmod(0o755)
+        # Redirect only host paths and the privilege identity; actual assets, KConfig
+        # validation, backup and configuration writes run through the login branch.
+        probe = '''import os, pathlib, runpy, sys
+from unittest.mock import patch
+main = runpy.run_path(sys.argv[1])["main"]
+paths = (pathlib.Path(os.environ["XDG_DATA_HOME"]), pathlib.Path(os.environ["XDG_CONFIG_HOME"]),
+         pathlib.Path(os.environ["XDG_CONFIG_HOME"]) / "plasmalogin.conf",
+         pathlib.Path(os.environ["XDG_STATE_HOME"]) / "arasaka-kde/backups")
+sys.argv = [sys.argv[1], "--login"]
+with patch("os.geteuid", return_value=0), patch.dict(main.__globals__, host_paths=lambda login: paths):
+    main()
+'''
+        for version in ("6.7.4-0arasaka1", "6.7.5-1"):
+            query.write_text(f'#!/bin/sh\nprintf "{version}"\n')
+            rejected = subprocess.run([sys.executable, "-c", probe, str(ROOT / "bin/apply-lockscreen")],
+                                      env=self.env, capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("lacks the pointer bridge", rejected.stderr)
+            self.assertEqual(self.target.read_text(), original)
+            self.assertFalse(self.writes.exists())
+        query.write_text('#!/bin/sh\nprintf "6.7.4-0arasaka2"\n')
+        result = subprocess.run([sys.executable, "-c", probe, str(ROOT / "bin/apply-lockscreen")],
+                                env=self.env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for key, value in self.expected.items():
+            self.assertEqual(self.read(GROUP, key), value, key)
+        self.assertEqual(self.read(["Greeter"], "WallpaperPluginId"), PLUGIN)
+        self.assertEqual(self.read(["Greeter"], "ShowClock"), "false")
+        self.assertEqual(self.read(["Greeter"], "PreselectedUser"), "keep")
+        self.assertEqual(self.read(["Greeter"], "PreselectedSession"), "plasma.desktop")
+        self.assertEqual(self.read(["Autologin"], "User"), "")
+        self.assertEqual(self.read(["Autologin"], "Relogin"), "false")
+        backups = list((self.home / "state/arasaka-kde/backups").glob("login-wallpaper-*/plasmalogin.conf"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_text(), original)
 
 
 if __name__ == "__main__":

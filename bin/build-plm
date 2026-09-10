@@ -18,7 +18,7 @@ import tarfile
 import tempfile
 
 
-VERSION = "6.7.4-0arasaka1"
+VERSION = "6.7.4-0arasaka2"
 SOURCE = "plasma-login-manager-6.7.4"
 PLUGIN = "online.knowmad.shaderwallpaper"
 
@@ -221,6 +221,12 @@ def main():
         for path in (packaging, *packaging.rglob("*")):
             check_path(path)
         shutil.copytree(packaging, source / "debian")
+        pointer_patch = repo / "packaging/plasmalogin/rain-pointer.patch"
+        pointer_bridge = repo / "native/login/pointerbridge.h"
+        for path in (pointer_patch, pointer_bridge):
+            check_path(path)
+        run("patch", "--batch", "--forward", "--fuzz=0", "-p1", "-d", str(source), "-i", str(pointer_patch))
+        shutil.copy2(pointer_bridge, source / "src/frontend/arasaka-pointerbridge.h")
         notices = []
         for path in sorted(source.rglob("*")):
             if not path.is_file() or "debian" in path.relative_to(source).parts:
@@ -237,6 +243,8 @@ def main():
         run("dpkg-buildpackage", "-b", "-us", "-uc", cwd=source, env=env, log=work / "plm-build.log")
         package = work / f"plasmalogin_{VERSION}_amd64.deb"
         inventory = {"source": pin, "source_directory": str(source), "omitted_archive_links": omitted,
+                     "rain_pointer_patch_sha256": hashlib.sha256(pointer_patch.read_bytes()).hexdigest(),
+                     "rain_pointer_bridge_sha256": hashlib.sha256(pointer_bridge.read_bytes()).hexdigest(),
                      "build_command": "DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b -us -uc",
                      "build_profiles": env["DEB_BUILD_PROFILES"],
                      "plm_qml_imports": qml_imports(source / "src"), "packages": []}
@@ -258,7 +266,8 @@ def main():
             required = [native, package_root / "LICENSE", package_root / "metadata.json",
                         stage / "usr/share/wallpapers/Arasaka/mikoshi-16x9.png",
                         stage / "usr/share/wallpapers/Arasaka/mikoshi-16x10.png",
-                        stage / "usr/share/wallpapers/Arasaka/shaders/Heartfelt_No_Heart.frag"]
+                        stage / "usr/share/wallpapers/Arasaka/shaders/Heartfelt_No_Heart.frag",
+                        stage / "usr/share/wallpapers/Arasaka/shaders/Interactive_Rain.frag"]
             if any(not p.is_file() for p in required):
                 raise ValueError("incomplete system wallpaper stage")
             docs = stage / "usr/share/doc/arasaka-login-wallpaper"

@@ -396,10 +396,11 @@ private Q_SLOTS:
             }
         }
         engine.setRainLockScreenHost(true);
+        QVERIFY(QMetaObject::invokeMethod(&input, "sessionLockChanged", Q_ARG(bool, true)));
         click({80, 120});
         renderer.synchronize(&engine);
         simulation.advance(1.0 / 30);
-        QCOMPARE(simulation.drops().size(), std::size_t(2));
+        QVERIFY2(simulation.drops().size() > 2, "greeter clicks must split drops even while the session is locked");
     }
 
     void sustainedPointerUsesActiveClock() {

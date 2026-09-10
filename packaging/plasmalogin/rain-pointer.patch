@@ -1,0 +1,34 @@
+--- a/src/frontend/greeter/greetereventfilter.cpp
++++ b/src/frontend/greeter/greetereventfilter.cpp
+@@ -10 +10,2 @@
+-#include "greetereventfilter.h"
++#include "greetereventfilter.h"
++#include "../arasaka-pointerbridge.h"
+@@ -19 +20 @@
+-    Q_UNUSED(obj)
++    arasaka::login::forwardPointer(qobject_cast<QQuickWindow *>(obj), event);
+--- a/src/frontend/wallpaper/wallpaperapp.h
++++ b/src/frontend/wallpaper/wallpaperapp.h
+@@ -34 +34,2 @@
+-    Q_SCRIPTABLE void blurScreen(const QString &screenName);
++    Q_SCRIPTABLE void blurScreen(const QString &screenName);
++    Q_SCRIPTABLE void rainPointer(const QString &screenName, int action, double x, double y);
+--- a/src/frontend/wallpaper/wallpaperapp.cpp
++++ b/src/frontend/wallpaper/wallpaperapp.cpp
+@@ -27 +27,2 @@
+-#include "wallpaperapp.h"
++#include "wallpaperapp.h"
++#include "../arasaka-pointerbridge.h"
+@@ -148 +149,12 @@
++void WallpaperApp::rainPointer(const QString &screenName, int action, double x, double y)
++{
++    if (m_wallpaperPackage.metadata().pluginId() != QStringLiteral("online.knowmad.shaderwallpaper")) {
++        return;
++    }
++    for (QWindow *window : topLevelWindows()) {
++        arasaka::login::deliverPointer(qobject_cast<WallpaperWindow *>(window), screenName, action, x, y);
++    }
++}
++
++
+ void WallpaperApp::blurScreen(const QString &screenName)

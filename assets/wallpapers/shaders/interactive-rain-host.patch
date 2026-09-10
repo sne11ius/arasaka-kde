@@ -23,21 +23,23 @@
  /**
   * @brief Main shader rendering engine using QQuickFramebufferObject
   * 
-@@ -43,6 +52,8 @@
+@@ -43,6 +52,9 @@
      
      // Playback control
      Q_PROPERTY(bool running READ running WRITE setRunning NOTIFY runningChanged)
 +    Q_PROPERTY(bool rainActive READ rainActive NOTIFY rainActiveChanged)
 +    Q_PROPERTY(bool rainLockScreenHost READ rainLockScreenHost WRITE setRainLockScreenHost NOTIFY rainLockScreenHostChanged)
++    Q_PROPERTY(int rainGreeterInteractionVersion READ rainGreeterInteractionVersion CONSTANT)
      Q_PROPERTY(qreal speed READ speed WRITE setSpeed NOTIFY speedChanged)
      Q_PROPERTY(int targetFps READ targetFps WRITE setTargetFps NOTIFY targetFpsChanged)
      Q_PROPERTY(int currentFps READ currentFps NOTIFY currentFpsChanged)
-@@ -171,6 +182,8 @@
+@@ -171,6 +183,9 @@
      QUrl shaderSource() const { return m_shaderSource; }
      QString shaderCode() const { return m_shaderCode; }
      bool running() const { return m_running; }
 +    bool rainActive() const { return m_rainActive; }
 +    bool rainLockScreenHost() const { return m_rainLockScreenHost; }
++    int rainGreeterInteractionVersion() const { return 1; }
      qreal speed() const { return m_speed; }
      int targetFps() const { return m_targetFps; }
      int currentFps() const { return m_currentFps; }
@@ -842,8 +844,8 @@
 +        && inputHost.window === shaderSystem.Window.window
 +        && !inputHost.lockScreenMode && !inputHost.loginScreenMode
 +    readonly property bool _allowMouse: inputHost !== null
-+        && inputHost.window === shaderSystem.Window.window && !inputHost.loginScreenMode
-+        && (!inputHost.lockScreenMode || (shaderEngine.rainActive && shaderEngine.rainLockScreenHost === true))
++        && inputHost.window === shaderSystem.Window.window
++        && (!(inputHost.lockScreenMode || inputHost.loginScreenMode) || (shaderEngine.rainActive && shaderEngine.rainLockScreenHost === true))
 +        && (wallpaperConfig ? (wallpaperConfig.mouseEnabled || false) : false)
      readonly property bool _allowAudio:   !restrictedMode && (wallpaperConfig ? (wallpaperConfig.audioEnabled || false) : false)
      readonly property bool _allowWindows: !restrictedMode && (wallpaperConfig ? (wallpaperConfig.windowsEnabled || false) : false)
@@ -859,7 +861,7 @@
 +        property: "rainLockScreenHost"
 +        value: shaderSystem.inputHost !== null
 +            && shaderSystem.inputHost.window === shaderSystem.Window.window
-+            && shaderSystem.inputHost.lockScreenMode && !shaderSystem.inputHost.loginScreenMode
++            && (shaderSystem.inputHost.lockScreenMode || shaderSystem.inputHost.loginScreenMode)
 +        when: target !== null
 +    }
 +
@@ -889,7 +891,7 @@
          hdrPipeline: (wallpaperConfig && wallpaperConfig.experimentalHdrPipeline) || false
  
 -        // Mouse input — disabled in lock-screen mode.
-+        // Mouse input requires a classified host; lockers permit only native Rain.
++        // Both greeters use native Rain's local hover and click observer.
          mouseEnabled: shaderSystem._allowMouse
          mouseBias: (wallpaperConfig && wallpaperConfig.mouseBias) || 1.0
  

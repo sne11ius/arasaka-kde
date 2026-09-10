@@ -6,12 +6,14 @@ if [[ -f $script_dir/arasaka_topology.py ]]; then
   engine=$script_dir/arasaka_topology.py
   layout=$script_dir/layout.js
   shader_layout=$script_dir/shader-wallpaper.js
+  shader_defaults=$script_dir/wallpaper-defaults.json
   colorizer_settings=$script_dir/Arasaka.json
 else
   repo_root=$(cd -- "$script_dir/.." && pwd)
   engine=$repo_root/lib/arasaka_topology.py
   layout=$repo_root/plasma/layout.js
   shader_layout=$repo_root/plasma/shader-wallpaper.js
+  shader_defaults=$repo_root/plasma/wallpaper-defaults.json
   colorizer_settings=$repo_root/theme/panel-colorizer/Arasaka.json
 fi
 state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/arasaka-kde
@@ -90,7 +92,7 @@ fi
 
 if $ensure_shader_wallpaper; then
   data_home=${XDG_DATA_HOME:-$HOME/.local/share}
-  for asset in "$shader_layout" \
+  for asset in "$shader_layout" "$shader_defaults" \
     "$data_home/plasma/wallpapers/online.knowmad.shaderwallpaper/contents/ui/shaderwallpaper/libshaderwallpaperplugin.so" \
     "$data_home/wallpapers/Arasaka/shaders/Heartfelt_No_Heart.frag" \
     "$data_home/wallpapers/Arasaka/shaders/Interactive_Rain.frag" \
@@ -131,6 +133,7 @@ if $ensure_shader_wallpaper; then
   # Desktops can appear after the output configuration was saved. Check every
   # enabled connector on each event, even when the topology signature is unchanged.
   shader_script=$(<"$shader_layout")
+  shader_script=${shader_script/__WALLPAPER_DEFAULTS_JSON__/"$(jq -c . "$shader_defaults")"}
   shader_script=${shader_script/__DATA_HOME_JSON__/"$(jq -cn --arg value "$data_home" '$value')"}
   shader_script=${shader_script/__PRIMARY_CONNECTOR_JSON__/"$(jq -cn --arg value "$primary" '$value')"}
   shader_script=${shader_script/__ENABLED_CONNECTORS_JSON__/"$(jq -c '.signature | fromjson | .enabled' <<<"$plan_json")"}

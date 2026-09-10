@@ -27,14 +27,29 @@ from the Plasma lock-screen settings.
 - [ ] Confirm the clock is absent when the greeter next starts. Do not interrupt
   the current desktop solely for this visual check.
 
-The lock screen is now separately configured through `bin/apply-lockscreen` with
-Heartfelt No Heart, 30 FPS, 75% speed, full resolution and no clock/date. Actual
-configuration readback passed; `[Daemon]` values and desktop/KWin/gallery/PLM
-hashes remained unchanged. The backup is
-`$HOME/.local/state/arasaka-kde/backups/lockscreen-20260907-225436-v6rjgj9j/`.
-Full-theme deployment uses the same command; the PLM migration remains separate.
+Desktop, idle/session lock and reboot/login now share the Interactive Rain
+background contract, including hover and click splashes. The common defaults are
+in `plasma/wallpaper-defaults.json`; `AGENTS.md` requires all three surfaces by
+default for future background work. `apply-lockscreen` preserves the clock and lock
+policy. PLM's separate greeter/wallpaper processes use a tested screen-local pointer
+bridge; authentication remains upstream.
 
-- [ ] Observe the shader and clock-free appearance at the next normal lock.
+The 2026-09-11 parity update is built and installed user-locally. Desktop
+configuration readback passed on both active screens, and the locker configuration
+was applied with the hidden-clock preference preserved. Backups are under
+`$HOME/.local/state/arasaka-kde/backups/`:
+`shader-wallpaper-20260911-003227-yd2nrnv0` and
+`lockscreen-20260911-003227-27dmuiqv`.
+The 54 shader/activation tests, 3 locker/login configuration tests, native
+graphics/input/host/QML tests, and staged system-renderer smoke check passed.
+Both system packages are built; APT simulation changes only those two packages.
+
+- [ ] User installs `plasmalogin_6.7.4-0arasaka2_amd64.deb` and the refreshed
+  `arasaka-login-wallpaper_1.0-1_amd64.deb`, then runs
+   `sudo ./bin/apply-lockscreen --login`. See `docs/login.md` for the scoped update.
+- [ ] Confirm hover and click splashes at the next normal PLM login.
+
+- [ ] Observe the shader, hover, click splashes and clock preference at the next normal lock.
   No forced lock, preview or restart was performed for this change.
 
 Implementation references:
@@ -51,7 +66,7 @@ Ask before rebooting or otherwise terminating the running desktop session.
 - Preserve user accounts, passwords, groups, home directories, and session files.
 - Preserve desktop, KWin, launcher, display, application, shell, wallet, and
   unrelated lock-screen configuration. Only the scoped lock-screen command
-  changes its requested wallpaper/clock appearance; never change lock policy.
+  changes the background appearance; preserve clock preferences and lock policy.
 - Preserve the user-local shader package, imported shaders, gallery, and favorites.
 - Do not run `apply-live`, `apply-launcher`, or normal desktop shader activation
   as part of this migration.
@@ -60,9 +75,8 @@ Ask before rebooting or otherwise terminating the running desktop session.
 - Keep SDDM installed, including its existing configuration and Arasaka theme,
   so a failed PLM login can be reversed from a TTY.
 - Do not copy the user's home into the greeter account or loosen home permissions.
-- Do not add, modify, or run tests, test suites, or synthetic greeter previews.
-  Retain operational safeguards: checksums, dependency/ownership inspection,
-  configuration readback, and observation of the actual deployment result.
+- Keep background parity and native input tests current. Component tests do not
+  exercise authentication; observe actual login after normal user-initiated reboot.
 - Do not import KDE Neon packages or repositories, build a moving Git branch,
   or run an untracked privileged `make install`.
 - Do not overwrite unrelated worktree changes or make commits without a request.
@@ -78,8 +92,8 @@ Ask before rebooting or otherwise terminating the running desktop session.
 - PLM 6.7.4 and the independent wallpaper package have built successfully against
   the installed stack. Installation, PLM startup, successful login and the login
   appearance are confirmed. The later clock-free appearance remains unobserved.
-- All three inspected desktops use `online.knowmad.shaderwallpaper`, Heartfelt No Heart,
-  30 FPS, full resolution, 75% speed, and no mouse/audio/window-reactive inputs.
+- All three inspected desktops use `online.knowmad.shaderwallpaper`, Interactive Rain,
+  30 FPS, full resolution and 75% speed, with mouse input enabled.
 - The desktop video-wallpaper implementation and its installed leftovers have
   already been removed. Do not restore them.
 - PLM supports our shader plugin, but **cannot reuse SDDM's arbitrary QML login
@@ -95,9 +109,9 @@ Ask before rebooting or otherwise terminating the running desktop session.
   sources without changing them.
 - [x] Read the actual desktop shader selections/settings through Plasma's
   read-only scripting interface. Do not execute wallpaper setters.
-- [x] Compare the actual shader/parameters with the approved appearance; no change
-  was found. On a future mismatch, ask which appearance
-  should be used for login; never reset the desktop to match this document.
+- [x] Compare actual shader/parameters with the approved desktop appearance. Future
+  managed background changes apply to all three surfaces by default; never reset
+  the desktop to an older effect from the migration record.
 - [x] Record package versions and dependency provenance. The user installed the
   dependencies before the full snapshot; the earlier installed inventory is
   explicitly reconstructed from the recorded APT transaction, not a contemporaneous capture.

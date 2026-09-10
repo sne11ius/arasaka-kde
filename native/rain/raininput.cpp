@@ -142,7 +142,7 @@ bool RainInput::eventFilter(QObject *watched, QEvent *event)
     case QEvent::MouseMove: {
         refreshGeometry();
         auto *mouse = static_cast<QMouseEvent *>(event);
-        // Only the explicit locker host may observe its own window while locked.
+        // Only an explicit greeter (locker or PLM) may observe its window while locked.
         if (!enabled_ || (locked_ && !lockScreenHost_) || !item_->isVisible() || !item_->isEnabled()
             || !window_->isVisible()) {
             invalidate();
@@ -166,7 +166,7 @@ bool RainInput::eventFilter(QObject *watched, QEvent *event)
         auto *mouse = static_cast<QMouseEvent *>(event);
         // At the window filter Qt sends both the second press and an extra DblClick.
         // Count presses only, while leaving both notifications available to the desktop.
-        if (!enabled_ || locked_ || lockScreenHost_ || !item_->isVisible() || !item_->isEnabled()
+        if (!enabled_ || (locked_ && !lockScreenHost_) || !item_->isVisible() || !item_->isEnabled()
             || !window_->isVisible() || mouse->button() != Qt::LeftButton
             || mouse->buttons() != Qt::LeftButton || mouse->modifiers() != Qt::NoModifier)
             break;

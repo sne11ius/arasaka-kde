@@ -17,6 +17,7 @@ cp "$RECONCILER" "$runtime/reconcile-displays"
 cp "$REPO_ROOT/lib/arasaka_topology.py" "$runtime/arasaka_topology.py"
 cp "$REPO_ROOT/theme/panel-colorizer/Arasaka.json" "$runtime/Arasaka.json"
 cp "$REPO_ROOT/plasma/shader-wallpaper.js" "$runtime/shader-wallpaper.js"
+cp "$REPO_ROOT/plasma/wallpaper-defaults.json" "$runtime/wallpaper-defaults.json"
 printf 'var launcherSession = "__LAUNCHER_SESSION__";\nvar hideDesktopIcons = __HIDE_DESKTOP_ICONS__;\n' >"$runtime/layout.js"
 RECONCILER="$runtime/reconcile-displays"
 

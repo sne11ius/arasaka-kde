@@ -1,3 +1,9 @@
+plasmalogin (6.7.4-0arasaka2) unstable; urgency=medium
+
+  * Forward screen-local greeter pointer activity to the native rain wallpaper.
+
+ -- Arasaka KDE Maintainers <maintainers@arasaka-kde.invalid>  Fri, 11 Sep 2026 12:00:00 +0000
+
 plasmalogin (6.7.4-0arasaka1) unstable; urgency=medium
 
   * Package pinned upstream PLM for local, non-disruptive preparation.

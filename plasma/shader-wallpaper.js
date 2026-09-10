@@ -41,37 +41,14 @@ targets.forEach(function (desktop) {
         report.desktops.push({id: desktop.id, screen: desktop.screen, wallpaperPlugin: desktop.wallpaperPlugin, preserved: true});
         return;
     }
-    var image = desktop.screen === primaryScreen ? "mikoshi-16x9.png" : "mikoshi-16x10.png";
-    var settings = {
-        selectedShaderPath: fileUrl(dataHome + "/wallpapers/Arasaka/shaders/Interactive_Rain.frag"),
-        selectedShaderCode: "",
-        running: true,
-        shaderSpeed: 0.75,
-        targetFps: 30,
-        resolutionScale: 1,
-        pauseMode: 0,
-        checkActiveScreen: true,
-        excludeWindows: [],
-        mouseEnabled: false,
-        audioEnabled: false,
-        windowsEnabled: false,
-        playlistEnabled: false,
-        enableShaderTweaks: false,
-        commonCode: "",
-        useBufferA: false,
-        useBufferB: false,
-        useBufferC: false,
-        useBufferD: false,
-        iChannel0Enabled: true,
-        iChannel0: fileUrl(dataHome + "/wallpapers/Arasaka/" + image),
-        imageChannel0: 0,
-        iChannel1Enabled: false,
-        iChannel2Enabled: false,
-        iChannel3Enabled: false,
-        imageChannel1: -1,
-        imageChannel2: -1,
-        imageChannel3: -1
-    };
+    var settings = __WALLPAPER_DEFAULTS_JSON__;
+    var image = settings.iChannel0;
+    if (desktop.screen !== primaryScreen && image === "mikoshi-16x9.png") image = "mikoshi-16x10.png";
+    var managedMouseEnabled = settings.mouseEnabled;
+    settings.selectedShaderPath = fileUrl(dataHome + "/wallpapers/Arasaka/" + settings.selectedShaderPath);
+    settings.iChannel0 = fileUrl(dataHome + "/wallpapers/Arasaka/" + image);
+    // Permission follows the committed host, not the preparation write.
+    settings.mouseEnabled = false;
     function readSettings() {
         var actual = {};
         Object.keys(settings).forEach(function (key) {
@@ -127,8 +104,8 @@ targets.forEach(function (desktop) {
         if (desktop.wallpaperPlugin !== plugin) {
             throw new Error("Wallpaper plugin mismatch on desktop " + desktop.id);
         }
-        settings.mouseEnabled = true;
-        desktop.writeConfig("mouseEnabled", true);
+        settings.mouseEnabled = managedMouseEnabled;
+        desktop.writeConfig("mouseEnabled", managedMouseEnabled);
         actual = readSettings();
         desktop.writeConfig(pendingKey, false);
         if (desktop.readConfig(pendingKey, true) !== false) {

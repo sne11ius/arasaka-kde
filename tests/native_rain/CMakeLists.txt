@@ -14,6 +14,14 @@ target_compile_options(rain_graphics_test PRIVATE -Wall -Wextra -Wpedantic)
 enable_testing()
 add_test(NAME rain_graphics COMMAND rain_graphics_test)
 
+add_executable(login_pointer_test login_pointer_test.cpp ../../native/rain/raininput.cpp)
+target_include_directories(login_pointer_test PRIVATE ../../native/rain)
+target_link_libraries(login_pointer_test PRIVATE Qt6::Quick Qt6::Test Qt6::DBus)
+target_compile_options(login_pointer_test PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME login_pointer COMMAND dbus-run-session -- $<TARGET_FILE:login_pointer_test>)
+set_tests_properties(login_pointer PROPERTIES TIMEOUT 20
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
+
 set(RAIN_UPSTREAM_SOURCE "" CACHE PATH "Patched pinned upstream source for real host lifecycle tests")
 if(RAIN_UPSTREAM_SOURCE)
     add_executable(rain_host_test rain_host_test.cpp

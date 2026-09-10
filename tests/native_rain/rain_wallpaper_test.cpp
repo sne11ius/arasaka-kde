@@ -128,7 +128,7 @@ private Q_SLOTS:
         lockView.setSource(lockSource);
         desktopView.setSource(desktopSource);
         secondDesktopView.setSource(desktopSource);
-        loginView.setSource(loginSource); // Both match patterns: login must win.
+        loginView.setSource(loginSource); // Both patterns identify a greeter, never a desktop.
         lockView.resize(320, 240);
         lockView.show();
         QVERIFY(QTest::qWaitForWindowExposed(&lockView));
@@ -154,8 +154,8 @@ private Q_SLOTS:
         if (rain && !previous) QVERIFY2(mouseChanges.count() >= 2, "Reparent must invalidate native input even in the same window");
 
         item->setParentItem(loginView.rootObject());
-        QCOMPARE(engine->property("mouseEnabled").toBool(), false);
-        if (!previous) QCOMPARE(engine->property("rainLockScreenHost").toBool(), false);
+        QCOMPARE(engine->property("mouseEnabled").toBool(), rain && !previous);
+        if (!previous) QCOMPARE(engine->property("rainLockScreenHost").toBool(), true);
         item->setParentItem(unknownView.contentItem());
         QCOMPARE(engine->property("mouseEnabled").toBool(), false);
         QVERIFY(!tracker->property("enabled").toBool() && !area->property("enabled").toBool());
@@ -195,7 +195,7 @@ private Q_SLOTS:
         QVERIFY(!area->property("enabled").toBool());
         QVERIFY(!area->property("hoverEnabled").toBool());
         newParent.setParentItem(loginView.rootObject());
-        QCOMPARE(engine->property("mouseEnabled").toBool(), false);
+        QCOMPARE(engine->property("mouseEnabled").toBool(), rain && !previous);
         QVERIFY(!tracker->property("enabled").toBool());
         QVERIFY(!area->property("enabled").toBool());
         QVERIFY(!area->property("hoverEnabled").toBool());
@@ -206,7 +206,7 @@ private Q_SLOTS:
         item->setParentItem(desktopView.contentItem());
         forbidGeneric = true;
         desktopView.setSource(loginSource);
-        QCOMPARE(engine->property("mouseEnabled").toBool(), false);
+        QCOMPARE(engine->property("mouseEnabled").toBool(), rain && !previous);
         QVERIFY(!tracker->property("enabled").toBool() && !area->property("enabled").toBool());
         QVERIFY2(leaks.isEmpty(), qPrintable(leaks.join(", ")));
         item->setParentItem(nullptr);

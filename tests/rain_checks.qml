@@ -192,13 +192,13 @@ Item {
             compare(hostEngine.mouseEnabled, false)
             config.mouseEnabled = true
             compare(hostEngine.mouseEnabled, __LOCK_HOST_SUPPORTED__)
-            // Login wins even if both role flags are true.
+            // Both greeters use the same committed native Rain interaction.
             setHost(true, true)
-            compare(hostEngine.mouseEnabled, false)
+            compare(hostEngine.mouseEnabled, __LOCK_HOST_SUPPORTED__)
             if (__LOCK_HOST_SUPPORTED__)
-                compare(hostEngine.rainLockScreenHost, false)
+                compare(hostEngine.rainLockScreenHost, true)
             setHost(false, true)
-            compare(hostEngine.mouseEnabled, false)
+            compare(hostEngine.mouseEnabled, __LOCK_HOST_SUPPORTED__)
             setHost(false, false)
             compare(hostEngine.mouseEnabled, true)
             setHost(true, false)

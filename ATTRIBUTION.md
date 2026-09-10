@@ -23,6 +23,8 @@ Existing component exceptions remain unchanged:
 | `theme/lockscreen/silent-plasma-6.7.patch` | Retains the upstream Silent KLockscreen GPL terms |
 | `native/rain/rainfieldrenderer.{h,cpp}` and `native/rain/raininput.{h,cpp}` | Original project code with explicit GPL-3.0-or-later notices; see `LICENSES/GPL-3.0-or-later.txt` |
 | `assets/wallpapers/shaders/interactive-rain-host.patch` | GPL-3.0-or-later integration into the upstream wallpaper module |
+| `native/login/pointerbridge.h` | GPL-2.0-or-later, as declared in its SPDX notice; see `LICENSES/GPL-2.0-or-later.txt` |
+| `packaging/plasmalogin/rain-pointer.patch` | Adaptation of the upstream PLM frontend; retains upstream per-file license notices |
 | `assets/wallpapers/shaders/heartfelt-no-heart.patch`, `assets/wallpapers/shaders/interactive-rain.patch`, and `assets/wallpapers/shaders/dusti.patch` | CC BY-NC-SA 3.0, with the qualifications below |
 
 Downloaded upstream components and shaders retain their own licenses and notices,
@@ -77,7 +79,7 @@ Bundled shaders retain their individual licenses rather than inheriting the
 wallpaper engine's GPL license.
 
 `native/rain/` contains original project droplet simulation, optical-field rendering
-and passive hover input code. The simulation follows the project EUPL-1.2 default;
+and passive hover/click input code. The simulation follows the project EUPL-1.2 default;
 the renderer and input files retain their explicit GPL-3.0-or-later notices.
 The installer compiles all six sources/headers into upstream's existing GPL native
 module using `assets/wallpapers/shaders/interactive-rain-host.patch`. This combined
@@ -97,6 +99,12 @@ The local package includes upstream `LICENSE`, `LICENSE.CC-BY-3.0`, the complete
 `/usr/share/doc/plasmalogin/`. Per-file GPL, LGPL, BSD, CC0 and CC-BY terms remain
 in effect; see the package's `copyright` file rather than assigning one license
 to all upstream materials. PLM's UI does not reuse this project's SDDM QML layout.
+
+`native/login/pointerbridge.h` and `packaging/plasmalogin/rain-pointer.patch`
+connect PLM's separate greeter and wallpaper processes over their existing session
+bus. The bridge forwards only screen-local pointer activity to the same passive
+native rain observer used by desktop and locker; it is original project code under
+its explicit GPL-2.0-or-later notice. The frontend patch retains upstream notices.
 
 **Heartfelt** is by Martijn Steinrucken, aka BigWings (2017), under
 [Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported](https://creativecommons.org/licenses/by-nc-sa/3.0/).
