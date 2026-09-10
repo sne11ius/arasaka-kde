@@ -44,30 +44,33 @@ void main() {
     gl_Position = vec4(position / logicalSize * vec2(2.,-2.) + vec2(-1.,1.), 0., 1.);
 })";
     // Both isolated caps and retained merge lobes use the same footprint AND height.
-    // Screen Y points down. Widen the lower body; independently thin and soften the upper film.
+    // Screen Y points down. Spread the upper film across soft shoulders above the lower bulb.
     const QByteArray capProfile = R"(
 vec2 capProfile(vec2 delta, float r, float h, vec4 ellipse) {
     float reach = r * length(vec2(ellipse.y * ellipse.z, ellipse.x / ellipse.z));
     float y = clamp(delta.y / reach, -1., 1.);
     float bulb = y * (1.5 - .5*y*y);
     float flow = ellipse.w;
-    // Odd transverse scaling preserves footprint area; keep the CPU hit-test inverse in sync.
-    delta.x /= 1. + .3*flow*bulb;
+    float upper = 1. - smoothstep(-.5, 0., y);
+    // The upper film gains roughly a quarter in width. Its disk-averaged width
+    // correction preserves area; keep the CPU hit-test inverse and bounds in sync.
+    float areaScale = 1. + .082453*flow;
+    delta.x /= (1. + flow*(.3*bulb + .24*upper)) / areaScale;
     float distance = length(vec2(dot(delta, ellipse.xy) / ellipse.z,
                                 dot(delta, vec2(-ellipse.y, ellipse.x)) * ellipse.z));
     float sphere = (r*r + h*h) / (2.*h);
     float cap = sqrt(max(0., sphere*sphere - distance*distance)) - (sphere-h);
     if (distance > r) cap = -(distance-r) * r / max(sphere-h, .00001);
-    float upper = 1. - smoothstep(-.5, 0., y);
     // Squaring the upper height eases its contact angle into the glass. The signed
     // quadratic continuation stays negative outside, so unions cannot create ghost sheets.
     cap *= 1. - flow*upper*(1. - abs(cap)/h);
     cap *= 1. + .6*flow*bulb;
-    // Integral over the rest cap h/r=.6, including the width Jacobian. With s=z/h,
-    // u=upper, g=bulb: integrate s*(1+.3*f*g)*(1+.6*f*g)*(1-f*u*(1-s)).
-    // Odd terms vanish; the remaining cubic is independent of radius and ellipse orientation.
+    // Integral over the rest cap h/r=.6, including the normalized width Jacobian.
+    // With s=z/h, u=upper, g=bulb, integrate
+    // s*(1+f*(.3*g+.24*u))*(1+.6*f*g)*(1-f*u*(1-s)) / areaScale.
+    // The cubic is independent of radius and ellipse orientation.
     // Trails have flow=0 and retain their original shallow spherical profile.
-    float volumeScale = 1. + flow*(-.1103962 + flow*(.1260102 - flow*.0110236));
+    float volumeScale = (1. + flow*(-.03696087 + flow*(.07380545 - flow*.00018763))) / areaScale;
     return vec2(cap / volumeScale, distance);
 }
 )";

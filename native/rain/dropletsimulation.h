@@ -28,7 +28,7 @@ struct SurfaceLobe {
     Vec2 axis{0, 1};
     double stretch = 1;
     double weight = 1; // Share of the physical body's water, independent of overlapping optical radii.
-    double flow = 0; // 0..1: broad lower bulb and shallow upper film as water slides downward.
+    double flow = 0; // 0..1: lower water weight and broad shallow upper film from size and downward motion.
 
     Vec2 halfExtent() const; // Conservative footprint bounds, including the lower bulb.
     double distance(Vec2 delta) const; // Inverse-deformed radial coordinate for visible-cap hit testing.

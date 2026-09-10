@@ -151,7 +151,7 @@ void clickingTheVisibleMergeSplitsWithoutGhosts() {
     DropletSimulationTestAccess::collide(simulation);
     require(surface(simulation.drops()[0]).count == 4, "prepare an extended merging silhouette");
     // Inside the fingertip margin of the right visible lobe, far outside the final cap's hit area.
-    DropletSimulationTestAccess::splash(simulation, {789, 500});
+    DropletSimulationTestAccess::splash(simulation, {784, 500});
     require(simulation.drops().size() >= 3, "click targeting must follow the visible merging shape");
     double water = 0, furthest = 0;
     for (const auto &d : simulation.drops()) {
@@ -211,7 +211,10 @@ void clicksFollowTheBroadLowerBelly() {
         DropletSimulationTestAccess::splash(missed, {900, 1190});
         require(missed.drops().size() == 1 && missed.drops()[0].id == 1,
                 "the old tapered tip below the rounded body must not remain as an invisible hit target");
-        DropletSimulationTestAccess::splash(simulation, {1078, 980});
+        const auto &body = simulation.drops()[0];
+        require(body.surface().height({1048 - body.position.x, 980 - body.position.y}) > 0,
+                "the belly fixture must target visible water on the taller deformed cap");
+        DropletSimulationTestAccess::splash(simulation, {1048, 980});
         require(simulation.drops().size() >= 3,
                 "the wide lower sides must remain clickable, including during a merge");
         double volume = 0;

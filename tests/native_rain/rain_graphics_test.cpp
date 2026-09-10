@@ -260,8 +260,10 @@ private Q_SLOTS:
                 lowerWidth += at(p, x, middle + 8) > .0001;
             }
             qInfo() << "FALLING_OUTLINE" << merging << "upper/lower widths" << upperWidth << lowerWidth;
-            QVERIFY2(lowerWidth > 1.2 * upperWidth,
-                     "the lower body must be visibly wider than the upper part, with a rounded bulb");
+            QVERIFY2(upperWidth >= 22,
+                     "the shallow upper film must spread across the shoulders rather than forming a narrow tip");
+            QVERIFY2(lowerWidth > upperWidth,
+                     "the widened film must still meet a fuller rounded lower body");
         } else {
             const float upper = at(p, 48, middle - 8), lower = at(p, 48, middle + 8);
             const float upperSlope = at(p, 48, top + 2) - at(p, 48, top + 1);
@@ -276,6 +278,50 @@ private Q_SLOTS:
         }
         QVERIFY(field.render(simulation.drops(), 0));
         QCOMPARE(pixels(field), p);
+    }
+
+    void largeCapsSagEvenAtLowSpeed_data() {
+        QTest::addColumn<double>("speed");
+        QTest::newRow("stationary") << 0.;
+        QTest::newRow("slowly falling") << 30.;
+    }
+
+    void largeCapsSagEvenAtLowSpeed() {
+        QFETCH(double, speed);
+        QVERIFY(context.makeCurrent(&surface));
+        RainFieldRenderer field;
+        QString error;
+        QVERIFY2(field.initialize({128, 128}, &error), qPrintable(error));
+        const Drop drop{1, {64.5, 64.5}, {64.5, 64.5}, {0, speed}, 46656}; // r=36
+        const auto shape = drop.surface();
+        QVERIFY(field.render({drop}, 0));
+        const auto p = pixels(field);
+        double volume = 0, momentY = 0;
+        int peakY = 64, left = 128, right = 0, top = 128, bottom = 0;
+        for (int y = 0; y < 128; ++y) {
+            if (at(p, 64, y) > at(p, 64, peakY)) peakY = y;
+            for (int x = 0; x < 128; ++x) {
+                const double height = at(p, x, y);
+                QVERIFY(std::isfinite(height) && height >= 0);
+                volume += height;
+                momentY += height * (y - 64);
+                if (height > .0001) {
+                    left = std::min(left, x); right = std::max(right, x);
+                    top = std::min(top, y); bottom = std::max(bottom, y);
+                }
+                const double cpu = shape.height({double(x - 64), double(y - 64)});
+                QVERIFY2(std::abs(cpu - height) < .001 * cpu + .001,
+                         "targeting must follow the sagging body and wider upper film");
+            }
+        }
+        qInfo() << "LARGE_CAP" << speed << "centroidY" << momentY / volume << "peakY" << peakY
+                << "width/height" << right - left + 1 << bottom - top + 1;
+        QVERIFY2(momentY / volume > 3 && peakY > 68,
+                 "large slow caps must carry visibly more water below their centers");
+        QVERIFY2(bottom - top > 1.1 * (right - left), "large slow caps must sag out of a circular footprint");
+        // Rest-cap integral is .336*pi*r^3; deformation redistributes it.
+        QVERIFY(std::abs(volume / (.336 * std::acos(-1.) * 46656) - 1) < .002);
+        QVERIFY2(drop.top() <= 64.5 - (64 - top), "retirement bounds must include a stationary cap's upper film");
     }
 
     void fallingProfileSurvivesReimpactAndSettlement() {
@@ -348,9 +394,9 @@ private Q_SLOTS:
         QVERIFY(field.render(simulation.drops(), 0));
         const auto p = pixels(field);
         // A positive-height patch in the shallow joining film, beyond both individual lobe margins.
-        // Logical (1000.9259, 797.2222) is the center of native texel (540,430), top-left origin.
-        const Vec2 click{1000.9259259259, 797.2222222222};
-        QVERIFY(p[((1079 - 430) * 1080 + 540) * 4] > 1);
+        // Logical (1000.9259, 754.6296) is the center of native texel (540,407), top-left origin.
+        const Vec2 click{1000.9259259259, 754.6296296296};
+        QVERIFY(p[((1079 - 407) * 1080 + 540) * 4] > 1);
         const auto shape = body.surface();
         for (std::size_t i = 0; i < shape.count; ++i) {
             const auto &lobe = shape.lobes[i];

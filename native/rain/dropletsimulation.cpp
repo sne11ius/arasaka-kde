@@ -75,17 +75,19 @@ double Drop::height() const { return 0.6 * radius(); }
 
 Vec2 SurfaceLobe::halfExtent() const
 {
-    return {radius * std::hypot(axis.x * stretch, axis.y / stretch) * (1 + .3 * flow),
+    return {radius * std::hypot(axis.x * stretch, axis.y / stretch) * (1 + .3 * flow) / (1 + .082453 * flow),
             radius * std::hypot(axis.y * stretch, axis.x / stretch)};
 }
 
 double SurfaceLobe::distance(Vec2 delta) const
 {
     // Keep this inverse width profile in sync with capProfile in the field renderer.
-    // The odd width adjustment preserves footprint area; its slope vanishes at both ends.
+    // Broaden the shallow upper shoulders; normalize the width to preserve footprint area.
     const double y = std::clamp(delta.y / halfExtent().y, -1., 1.);
     const double bulb = y * (1.5 - .5 * y * y);
-    delta.x /= 1 + .3 * flow * bulb;
+    const double t = std::clamp((y + .5) / .5, 0., 1.);
+    const double upper = 1 - t * t * (3 - 2 * t);
+    delta.x /= (1 + flow * (.3 * bulb + .24 * upper)) / (1 + .082453 * flow);
     return std::hypot((delta.x * axis.x + delta.y * axis.y) / stretch,
                       (delta.y * axis.x - delta.x * axis.y) * stretch);
 }
@@ -103,7 +105,9 @@ double SurfaceLobe::signedHeight(Vec2 delta) const
     const double upper = 1 - t * t * (3 - 2 * t);
     cap *= 1 - flow * upper * (1 - std::abs(cap) / h);
     cap *= 1 + .6 * flow * bulb;
-    return cap / (1 + flow * (-.1103962 + flow * (.1260102 - flow * .0110236)));
+    const double volumeScale = (1 + flow * (-.03696087 + flow * (.07380545 - flow * .00018763)))
+        / (1 + .082453 * flow);
+    return cap / volumeScale;
 }
 
 double DropSurface::height(Vec2 delta) const
@@ -134,10 +138,21 @@ double DropSurface::margin() const
 
 DropSurface Drop::surface() const
 {
+    const double r = radius();
     const double speed = std::hypot(velocity.x, velocity.y);
     const double falling = std::clamp(velocity.y / 120., 0., 1.);
-    const SurfaceLobe target{{}, radius(), speed > 0 ? Vec2{velocity.x / speed, velocity.y / speed} : Vec2{0, 1},
-                             1 + .2 * std::min(speed / 120., 1.), 1, falling * falling * (3 - 2 * falling)};
+    const double size = std::clamp((r - 12.) / 24., 0., 1.);
+    const double sag = size * size * (3 - 2 * size);
+    const double motionFlow = falling * falling * (3 - 2 * falling);
+    const Vec2 axis = speed > 0 ? Vec2{velocity.x / speed, velocity.y / speed} : Vec2{0, 1};
+    // Add a gentle screen-down gravity stretch to the velocity ellipse in log-metric space.
+    // Large caps sag even while pinned; sideways/upward steering remains continuous through rest.
+    const double motionLog = std::log(1 + .2 * std::min(speed / 120., 1.));
+    const double qx = motionLog * (axis.x * axis.x - axis.y * axis.y) - std::log(1 + .1 * sag);
+    const double qy = 2 * motionLog * axis.x * axis.y;
+    const double angle = .5 * std::atan2(qy, qx);
+    const SurfaceLobe target{{}, r, {std::cos(angle), std::sin(angle)}, std::exp(std::hypot(qx, qy)),
+                             1, motionFlow + .75 * sag * (1 - motionFlow)};
     DropSurface result;
     result.lobes[0] = target;
     if (merging.empty()) return result;
@@ -174,7 +189,6 @@ DropSurface Drop::surface() const
 
 double Drop::top() const
 {
-    if (merging.empty() && velocity.x == 0 && velocity.y == 0) return position.y - radius();
     const auto shape = surface();
     double top = std::numeric_limits<double>::infinity();
     for (std::size_t i = 0; i < shape.count; ++i) {
