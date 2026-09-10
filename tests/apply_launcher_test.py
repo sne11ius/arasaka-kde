@@ -147,14 +147,18 @@ class ApplyLauncherTest(unittest.TestCase):
         if clock_step is not None:
             # Only the installer's clock advances; child commands and their timeouts remain real.
             command = [str(self.tools / "python3"), "-c", '''
-import runpy, subprocess, sys
+import runpy, subprocess, sys, time
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 step = float(sys.argv[1])
 sys.argv = sys.argv[2:]
 clock = Mock(return_value=0)
+subprocess_time = SimpleNamespace(**vars(time))
 def advance(seconds):
     clock.return_value += step
-with patch("time.monotonic", clock), patch("time.sleep", advance):
+# Popen.wait() may sleep after a child closes its pipes but before it exits.
+# That cleanup must use real time rather than consume the installer's deadline.
+with patch("subprocess.time", subprocess_time), patch("time.monotonic", clock), patch("time.sleep", advance):
     runpy.run_path(sys.argv[0], run_name="__main__")
 ''', str(clock_step), *command]
         return subprocess.run(command, env={**self.env, **env},
