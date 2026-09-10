@@ -840,7 +840,7 @@ void finiteBoundedLongRun()
                     "bounded finite speed");
             require(d.position.x >= 0 && d.position.x <= 1920 && d.position.y >= 0,
                     "top and side boundaries retain drops");
-            require(d.position.y - d.radius() <= 1080, "drops fully below the viewport are retired");
+            require(d.top() <= 1080, "surfaces fully below the viewport are retired");
         }
     }
     require(largestId > 1024, "long run exercises ongoing rain, not only static seeded drops");

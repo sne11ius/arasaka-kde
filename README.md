@@ -511,6 +511,14 @@ Clicks on clear glass do nothing. Very small drops, cramped edges, and scenes at
 1,024-drop limit receive a nudge; limited remaining capacity produces fewer fragments.
 Desktop clicks continue through to Plasma normally. Splashes use unmodified left
 presses on the desktop; the lock screen retains its passive hover interaction.
+Merging drops retain their visible lobes, form a smooth liquid neck, and pull into
+one rounded cap over roughly a quarter-second at the managed playback speed.
+Small drops are absorbed faster. This also applies to splash-fragment impacts;
+clicking a drop mid-merge targets its visible lobes and breaks up the whole body
+without leaving solid ghost drops. Physical water and momentum combine once at
+contact, while a bounded four-lobe surface handles the brief optical transition.
+Successive collisions start from the current shape. Animation time and wet trails
+follow playback, so pausing freezes the merge as well as the rainfall.
 It adapts BigWings' Heartfelt through
 [kde-shader-wallpaper](https://github.com/y4my4my4m/kde-shader-wallpaper).
 **Heartfelt No Heart remains a separate gallery effect and the unchanged PLM/login
@@ -774,6 +782,9 @@ not a GPU/frame-time benchmark or proof of live Folder View hover delivery.
 The native tests also exercise real Qt clicks at 30 FPS and 75% speed, rendered
 fragment separation, fast press/release delivery, passive button forwarding, and
 pending-click cancellation across pause, input permission, and host changes.
+Coalescence tests cover intermediate neck/outer-lobe pixels, settling, repeated
+impacts, clicking a merging silhouette, splash-fragment absorption, and the full
+geometry budget. Isolated caps retain their existing height and optical profile.
 The click-splash update was installed on 2026-09-10. After a user-approved Plasma
 restart, the shell loaded the new native module and compiled Interactive Rain on
 both active displays; the user confirmed the desktop interaction and appearance.

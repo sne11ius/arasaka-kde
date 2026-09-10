@@ -12,6 +12,27 @@
 
 using namespace arasaka::rain;
 
+namespace arasaka::rain {
+struct DropletSimulationTestAccess {
+    static void setDrops(DropletSimulation &simulation, std::vector<Drop> drops) {
+        simulation.reset(128, 128, 1, 0);
+        simulation.lengthScale_ = 1;
+        simulation.drops_ = std::move(drops);
+        for (const auto &d : simulation.drops_) simulation.nextId_ = std::max(simulation.nextId_, d.id + 1);
+    }
+    static void collide(DropletSimulation &simulation) {
+        std::vector<Vec2> starts;
+        for (const auto &d : simulation.drops_) starts.push_back(d.position);
+        simulation.mergeCollisions(starts);
+    }
+    static void splash(DropletSimulation &simulation, Vec2 position) { simulation.splash(position); }
+    static void append(DropletSimulation &simulation, Drop drop) {
+        simulation.nextId_ = std::max(simulation.nextId_, drop.id + 1);
+        simulation.drops_.push_back(drop);
+    }
+};
+}
+
 class RainGraphicsTest : public QObject {
     Q_OBJECT
     QOpenGLContext context;
@@ -161,6 +182,180 @@ private Q_SLOTS:
         QVERIFY(field.resize({128, 128}, &error));
         QVERIFY(field.render({}, 0));
         for (float value : pixels(field)) QCOMPARE(value, 0);
+    }
+
+    void mergingCapsRetainLobesAndGrowALiquidNeck() {
+        QVERIFY(context.makeCurrent(&surface));
+        DropletSimulation simulation;
+        DropletSimulationTestAccess::setDrops(simulation, {
+            {1, {52.5, 64.5}, {52.5, 64.5}, {}, 1728}, {2, {76.5, 64.5}, {76.5, 64.5}, {}, 1728}});
+        RainFieldRenderer field;
+        QString error;
+        QVERIFY(field.initialize({128, 128}, &error));
+        QVERIFY(field.render(simulation.drops(), 0));
+        const auto separate = pixels(field);
+        DropletSimulationTestAccess::collide(simulation);
+        QCOMPARE(simulation.drops().size(), std::size_t(1));
+        QVERIFY(field.render(simulation.drops(), 1.0 / 30));
+        const auto contact = pixels(field);
+        QVERIFY2(at(contact, 44, 64) > 1 && at(contact, 84, 64) > 1,
+                 "both original outer lobes must remain visible at contact");
+        QVERIFY(std::abs(at(contact, 52, 64) - at(separate, 52, 64)) < .1);
+        QVERIFY(std::abs(at(contact, 76, 64) - at(separate, 76, 64)) < .1);
+        QVERIFY2(at(contact, 64, 64) > .1 && at(contact, 64, 64) < 2,
+                 "contact should create a thin neck, not instantly draw the final round cap");
+        for (int x = 52; x <= 76; ++x) QVERIFY(at(contact, x, 64) > 0);
+        simulation.advance(.075);
+        QVERIFY(field.render(simulation.drops(), .075));
+        const auto middle = pixels(field);
+        QVERIFY2(at(middle, 64, 64) > at(contact, 64, 64) + 1,
+                 "the neck thickens as the two lobes pull together");
+        QVERIFY(at(middle, 44, 64) < at(contact, 44, 64));
+        QVERIFY(field.render(simulation.drops(), 0));
+        QCOMPARE(pixels(field), middle);
+        simulation.advance(.25);
+        QVERIFY(field.render(simulation.drops(), .25));
+        const auto settled = pixels(field);
+        RainFieldRenderer reference;
+        QVERIFY(reference.initialize({128, 128}, &error));
+        auto solid = simulation.drops();
+        for (auto &d : solid) d.merging.clear();
+        QVERIFY(reference.render(solid, 0));
+        const auto expected = pixels(reference);
+        for (std::size_t i = 0; i < settled.size(); i += 4) QCOMPARE(settled[i], expected[i]);
+        QCOMPARE(context.extraFunctions()->glGetError(), GLenum(GL_NO_ERROR));
+    }
+
+    void clickingAMergingSurfaceLeavesOnlyTheFragments() {
+        QVERIFY(context.makeCurrent(&surface));
+        DropletSimulation simulation;
+        DropletSimulationTestAccess::setDrops(simulation, {
+            {1, {52.5, 64.5}, {52.5, 64.5}, {}, 1728}, {2, {76.5, 64.5}, {76.5, 64.5}, {}, 1728}});
+        DropletSimulationTestAccess::collide(simulation);
+        RainFieldRenderer field, reference;
+        QString error;
+        QVERIFY(field.initialize({128, 128}, &error));
+        QVERIFY(reference.initialize({128, 128}, &error));
+        QVERIFY(field.render(simulation.drops(), 0));
+        QVERIFY(at(pixels(field), 44, 64) > 1);
+        DropletSimulationTestAccess::splash(simulation, {84, 64});
+        QVERIFY(simulation.drops().size() >= 3);
+        QVERIFY(field.render(simulation.drops(), 1.0 / 30));
+        QVERIFY(reference.render(simulation.drops(), 0));
+        const auto actual = pixels(field), expected = pixels(reference);
+        for (std::size_t i = 0; i < actual.size(); i += 4) QCOMPARE(actual[i], expected[i]);
+        QCOMPARE(at(actual, 64, 64), 0); // No residual solid parent; wet fog history is allowed.
+    }
+
+    void splashImpactRetainsTheSmallReceivingLobe() {
+        QVERIFY(context.makeCurrent(&surface));
+        DropletSimulation simulation;
+        DropletSimulationTestAccess::setDrops(simulation, {{1, {64, 64}, {64, 64}, {}, 1728}});
+        DropletSimulationTestAccess::splash(simulation, {64, 64});
+        auto fragment = simulation.drops().back();
+        fragment.position = fragment.previousPosition = {40.5, 64.5};
+        fragment.velocity = {300, 0};
+        const Vec2 target{40.5 + fragment.radius() + 2, 64.5};
+        DropletSimulationTestAccess::setDrops(simulation, {fragment, {100, target, target, {}, 8}});
+        DropletSimulationTestAccess::collide(simulation);
+        QCOMPARE(simulation.drops().size(), std::size_t(1));
+        RainFieldRenderer field;
+        QString error;
+        QVERIFY(field.initialize({128, 128}, &error));
+        QVERIFY(field.render(simulation.drops(), 0));
+        QVERIFY2(at(pixels(field), qFloor(target.x), qFloor(target.y)) > .5,
+                 "splash impacts visibly retain and absorb the receiving droplet");
+    }
+
+    void denseMergingBodiesFitTheGeometryBudget() {
+        QVERIFY(context.makeCurrent(&surface));
+        Drop body{1, {64, 64}, {60, 60}, {100, 100}, 256};
+        body.merging = {{{-4, -4}, 4, {0, 1}, 1, .25}, {{4, -4}, 4, {0, 1}, 1, .25},
+                        {{-4, 4}, 4, {0, 1}, 1, .25}, {{4, 4}, 4, {0, 1}, 1, .25}};
+        body.mergeDuration = .2;
+        body.mergeJoins = {{{0, 1, 1.2}, {2, 3, 1.2}, {4, 5, 1.2}}};
+        std::vector<Drop> drops(1024, body);
+        RainFieldRenderer field;
+        QString error;
+        QVERIFY(field.initialize({128, 128}, &error));
+        QVERIFY2(field.render(drops, 1.0 / 30), "all merging caps and four trails per body must fit the allocated VBOs");
+        for (const float value : pixels(field)) QVERIFY(std::isfinite(value) && value >= 0);
+        QCOMPARE(context.extraFunctions()->glGetError(), GLenum(GL_NO_ERROR));
+    }
+
+    void reimpactPreservesTheExistingLiquidNeck() {
+        QVERIFY(context.makeCurrent(&surface));
+        DropletSimulation simulation;
+        DropletSimulationTestAccess::setDrops(simulation, {
+            {1, {52.5, 64.5}, {52.5, 64.5}, {}, 1728}, {2, {76.5, 64.5}, {76.5, 64.5}, {}, 1728}});
+        DropletSimulationTestAccess::collide(simulation);
+        simulation.advance(.05);
+        RainFieldRenderer field;
+        QString error;
+        QVERIFY(field.initialize({128, 128}, &error));
+        QVERIFY(field.render(simulation.drops(), 0));
+        const auto before = pixels(field);
+        const auto body = simulation.drops()[0];
+        const Vec2 p{body.position.x + body.radius() + 4, body.position.y};
+        DropletSimulationTestAccess::append(simulation, {3, p, p, {}, 64});
+        DropletSimulationTestAccess::collide(simulation);
+        QVERIFY(field.render(simulation.drops(), 1.0 / 30));
+        const auto after = pixels(field);
+        double change = 0;
+        for (int y = 52; y <= 76; ++y)
+            for (int x = 60; x <= 68; ++x)
+                change = std::max(change, double(std::abs(at(before, x, y) - at(after, x, y))));
+        QVERIFY2(change < .03, qPrintable(QStringLiteral("reimpact changed the existing neck by %1 pixels of height").arg(change)));
+    }
+
+    void steeringThroughPerpendicularKeepsTheSurfaceContinuous() {
+        QVERIFY(context.makeCurrent(&surface));
+        Drop body{1, {64.5, 64.5}, {64.5, 64.5}, {.0001, 120}, 1024};
+        body.merging = {{{-8, 0}, 8, {1, 0}, 1.2, .5}, {{8, 0}, 8, {1, 0}, 1.2, .5}};
+        body.mergeAge = .1;
+        body.mergeDuration = .2;
+        body.mergeJoins[0] = {0, 1, 2.4};
+        RainFieldRenderer field;
+        QString error;
+        QVERIFY(field.initialize({128, 128}, &error));
+        QVERIFY(field.render({body}, 0));
+        const auto before = pixels(field);
+        body.velocity.x = -.0001;
+        QVERIFY(field.render({body}, 1.0 / 30));
+        const auto after = pixels(field);
+        double change = 0;
+        for (std::size_t i = 0; i < before.size(); i += 4)
+            change = std::max(change, double(std::abs(before[i] - after[i])));
+        QVERIFY2(change < .01, qPrintable(QStringLiteral("tiny steering change rotated the footprint: %1").arg(change)));
+    }
+
+    void twoMergingGroupsKeepTheirIndependentNecks() {
+        QVERIFY(context.makeCurrent(&surface));
+        DropletSimulation left, right, combined;
+        DropletSimulationTestAccess::setDrops(left, {
+            {1, {56.5, 58.5}, {56.5, 58.5}, {}, 216}, {2, {56.5, 70.5}, {56.5, 70.5}, {}, 216}});
+        DropletSimulationTestAccess::setDrops(right, {
+            {3, {71.5, 58.5}, {71.5, 58.5}, {}, 216}, {4, {71.5, 70.5}, {71.5, 70.5}, {}, 216}});
+        DropletSimulationTestAccess::collide(left);
+        DropletSimulationTestAccess::collide(right);
+        left.advance(.025);
+        right.advance(.05);
+        DropletSimulationTestAccess::setDrops(combined, {left.drops()[0], right.drops()[0]});
+        RainFieldRenderer field;
+        QString error;
+        QVERIFY(field.initialize({128, 128}, &error));
+        QVERIFY(field.render(combined.drops(), 0));
+        const auto before = pixels(field);
+        DropletSimulationTestAccess::collide(combined);
+        QCOMPARE(combined.drops().size(), std::size_t(1));
+        QCOMPARE(combined.drops()[0].surface().count, std::size_t(4));
+        QVERIFY(field.render(combined.drops(), 1.0 / 30));
+        const auto after = pixels(field);
+        for (const int x : {56, 71}) {
+            QVERIFY(at(before, x, 64) > .3);
+            QVERIFY2(std::abs(at(before, x, 64) - at(after, x, 64)) < .03,
+                     "joining two in-progress merges must preserve each old neck's shape and blending width");
+        }
     }
 
     void passiveWindowCoordinatesAndCancellation() {

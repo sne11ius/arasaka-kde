@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -21,15 +22,45 @@ struct PointerSnapshot {
     double sampleSeconds = 0;
 };
 
+struct SurfaceLobe {
+    Vec2 offset; // Relative to the owning physical drop; never an independent particle.
+    double radius = 1;
+    Vec2 axis{0, 1};
+    double stretch = 1;
+    double weight = 1; // Share of the physical body's water, independent of overlapping optical radii.
+};
+
+struct SurfaceJoin {
+    // Leaves are 0..3, preceding join results are 4..6 (postorder).
+    int left = 0;
+    int right = 1;
+    double smoothing = 0;
+};
+
+struct DropSurface {
+    static constexpr std::size_t maximumLobes = 4;
+    std::array<SurfaceLobe, maximumLobes> lobes{};
+    std::array<SurfaceJoin, maximumLobes - 1> joins{};
+    std::size_t count = 1;
+    double smoothing = 0; // Signed-height smooth-union width in logical pixels.
+};
+
 struct Drop {
     std::uint64_t id = 0;
     Vec2 position;
     Vec2 previousPosition; // Position at entry to the last positive-time displayed frame.
     Vec2 velocity;
     double volume = 1; // Normalized cap volume: radius^3, with cap height = 0.6 * radius.
+    // Bounded optical history of a physical merge. Time advances only on fixed active ticks.
+    std::vector<SurfaceLobe> merging{};
+    double mergeAge = 0;
+    double mergeDuration = 0;
+    std::array<SurfaceJoin, DropSurface::maximumLobes - 1> mergeJoins{};
 
     double radius() const;
     double height() const;
+    DropSurface surface() const;
+    double top() const; // Conservative upper edge of the current solid surface, including liquid necks.
 };
 
 class DropletSimulation {

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <numeric>
 #include <unordered_map>
@@ -10,8 +11,122 @@
 
 namespace arasaka::rain {
 
+namespace {
+void collapseSurface(DropSurface &shape)
+{
+    // Collapse the closest sibling leaves. Other liquid necks keep their blending state.
+    std::size_t selected = 0;
+    double nearest = std::numeric_limits<double>::infinity();
+    for (std::size_t i = 0; i + 1 < shape.count; ++i) {
+        const auto &join = shape.joins[i];
+        if (join.left >= 4 || join.right >= 4) continue;
+        const auto &x = shape.lobes[join.left]; const auto &y = shape.lobes[join.right];
+        const double distance = std::hypot(x.offset.x - y.offset.x, x.offset.y - y.offset.y);
+        if (distance < nearest) { nearest = distance; selected = i; }
+    }
+    const int a = std::min(shape.joins[selected].left, shape.joins[selected].right);
+    const int b = std::max(shape.joins[selected].left, shape.joins[selected].right);
+    auto &x = shape.lobes[a]; const auto y = shape.lobes[b];
+    const double share = x.weight / (x.weight + y.weight);
+    const double radiusSquared = share * x.radius * x.radius + (1 - share) * y.radius * y.radius
+        + share * (1 - share) * nearest * nearest;
+    x.offset = {std::lerp(y.offset.x, x.offset.x, share), std::lerp(y.offset.y, x.offset.y, share)};
+    x.radius = std::sqrt(radiusSquared);
+    x.weight += y.weight;
+    for (std::size_t i = b; i + 1 < shape.count; ++i) shape.lobes[i] = shape.lobes[i + 1];
+    const auto oldJoins = shape.joins;
+    const auto remap = [=](int index) {
+        if (index < 4) return index - (index > b);
+        const int node = index - 4;
+        return node == int(selected) ? a : index - (node > int(selected));
+    };
+    std::size_t next = 0;
+    for (std::size_t i = 0; i + 1 < shape.count; ++i) {
+        if (i != selected)
+            shape.joins[next++] = {remap(oldJoins[i].left), remap(oldJoins[i].right), oldJoins[i].smoothing};
+    }
+    --shape.count;
+}
+
+DropSurface joinSurfaces(DropSurface a, DropSurface b)
+{
+    // Constant-sized scratch state, including when an entire screen collides at once.
+    while (a.count + b.count > DropSurface::maximumLobes) {
+        if (a.count >= b.count && a.count > 1) collapseSurface(a);
+        else collapseSurface(b);
+    }
+    double smallestRadius = a.lobes[0].radius;
+    for (std::size_t i = 0; i < a.count; ++i) smallestRadius = std::min(smallestRadius, a.lobes[i].radius);
+    for (std::size_t i = 0; i < b.count; ++i) smallestRadius = std::min(smallestRadius, b.lobes[i].radius);
+    const auto root = [](std::size_t count) { return count == 1 ? 0 : 4 + int(count) - 2; };
+    const auto remap = [&](int index) { return index < 4 ? index + int(a.count) : index + int(a.count) - 1; };
+    for (std::size_t i = 0; i < b.count; ++i) a.lobes[a.count + i] = b.lobes[i];
+    for (std::size_t i = 0; i + 1 < b.count; ++i)
+        a.joins[a.count - 1 + i] = {remap(b.joins[i].left), remap(b.joins[i].right), b.joins[i].smoothing};
+    a.joins[a.count + b.count - 2] = {root(a.count), remap(root(b.count)), .3 * smallestRadius};
+    a.count += b.count;
+    return a;
+}
+}
+
 double Drop::radius() const { return std::cbrt(volume); }
 double Drop::height() const { return 0.6 * radius(); }
+
+DropSurface Drop::surface() const
+{
+    const double speed = std::hypot(velocity.x, velocity.y);
+    const SurfaceLobe target{{}, radius(), speed > 0 ? Vec2{velocity.x / speed, velocity.y / speed} : Vec2{0, 1},
+                             1 + .2 * std::min(speed / 120., 1.), 1};
+    DropSurface result;
+    result.lobes[0] = target;
+    if (merging.empty()) return result;
+    const double t = mergeDuration > 0 ? std::clamp(mergeAge / mergeDuration, 0., 1.) : 1;
+    const double progress = t * t * (3 - 2 * t);
+    result.count = std::min(merging.size(), DropSurface::maximumLobes);
+    for (std::size_t i = 0; i + 1 < result.count; ++i) {
+        result.joins[i] = mergeJoins[i];
+        result.joins[i].smoothing *= 1 - progress;
+        result.smoothing = std::max(result.smoothing, result.joins[i].smoothing);
+    }
+    for (std::size_t i = 0; i < result.count; ++i) {
+        auto &lobe = result.lobes[i];
+        lobe = merging[i];
+        lobe.offset.x *= 1 - progress;
+        lobe.offset.y *= 1 - progress;
+        lobe.radius = std::lerp(lobe.radius, target.radius, progress);
+        // Interpolate the area-preserving ellipse's log metric (double-angle form).
+        // Perpendicular steering passes smoothly through a round shape rather than
+        // flipping between two equally near orientation branches.
+        const double oldLog = std::log(lobe.stretch), newLog = std::log(target.stretch);
+        const double qx = std::lerp(oldLog * (lobe.axis.x*lobe.axis.x - lobe.axis.y*lobe.axis.y),
+                                    newLog * (target.axis.x*target.axis.x - target.axis.y*target.axis.y), progress);
+        const double qy = std::lerp(2 * oldLog * lobe.axis.x * lobe.axis.y,
+                                    2 * newLog * target.axis.x * target.axis.y, progress);
+        const double angle = .5 * std::atan2(qy, qx);
+        lobe.axis = {std::cos(angle), std::sin(angle)};
+        lobe.stretch = std::exp(std::hypot(qx, qy));
+    }
+    return result;
+}
+
+double Drop::top() const
+{
+    if (merging.empty()) {
+        const double r = radius();
+        if (velocity.x == 0 && velocity.y == 0) return position.y - r;
+        const double speed = std::hypot(velocity.x, velocity.y);
+        const double stretch = 1 + .2 * std::min(speed / 120., 1.);
+        return position.y - r * std::hypot(velocity.y / speed * stretch, velocity.x / speed / stretch);
+    }
+    const auto shape = surface();
+    double top = std::numeric_limits<double>::infinity();
+    for (std::size_t i = 0; i < shape.count; ++i) {
+        const auto &lobe = shape.lobes[i];
+        const double reach = lobe.radius * std::hypot(lobe.axis.y * lobe.stretch, lobe.axis.x / lobe.stretch);
+        top = std::min(top, position.y + lobe.offset.y - reach);
+    }
+    return top - 2 * shape.smoothing;
+}
 
 double DropletSimulation::randomUnit()
 {
@@ -76,18 +191,26 @@ void DropletSimulation::resize(double width, double height)
         const long double scaleX = static_cast<long double>(width) / width_;
         const long double scaleY = static_cast<long double>(height) / height_;
         for (auto &drop : drops_) {
-            const long double bottom = height + drop.radius();
-            drop.position.x = static_cast<double>(drop.position.x * scaleX);
-            drop.position.y = static_cast<double>(std::min(drop.position.y * scaleY, bottom + 1));
-            drop.previousPosition.x = static_cast<double>(drop.previousPosition.x * scaleX);
-            drop.previousPosition.y = static_cast<double>(std::min(drop.previousPosition.y * scaleY, bottom));
             const long double vx = drop.velocity.x * scaleX;
             const long double vy = drop.velocity.y * scaleY;
             const long double divisor = std::max(1.0L, std::hypot(vx, vy) / maximumSpeed);
             drop.velocity.x = static_cast<double>(vx / divisor);
             drop.velocity.y = static_cast<double>(vy / divisor);
+            for (auto &lobe : drop.merging) {
+                lobe.offset.x = static_cast<double>(std::clamp(lobe.offset.x * scaleX,
+                    -static_cast<long double>(width + drop.radius()), static_cast<long double>(width + drop.radius())));
+                const long double limit = height + drop.radius();
+                lobe.offset.y = static_cast<double>(std::clamp(lobe.offset.y * scaleY, -limit, limit));
+            }
+            // Keep enough room for an upper lobe that is still on-screen, then clip
+            // extreme resizes just beyond the whole surface's retirement boundary.
+            const long double bottom = height + (drop.position.y - drop.top());
+            drop.position.x = static_cast<double>(drop.position.x * scaleX);
+            drop.position.y = static_cast<double>(std::min(drop.position.y * scaleY, bottom + 1));
+            drop.previousPosition.x = static_cast<double>(drop.previousPosition.x * scaleX);
+            drop.previousPosition.y = static_cast<double>(std::min(drop.previousPosition.y * scaleY, bottom));
         }
-        std::erase_if(drops_, [height](const auto &drop) { return drop.position.y - drop.radius() > height; });
+        std::erase_if(drops_, [height](const auto &drop) { return drop.top() > height; });
     }
     width_ = width;
     height_ = height;
@@ -181,6 +304,14 @@ void DropletSimulation::step()
         * lengthScale_ * lengthScale_ * lengthScale_ * fixedStep / drops_.size();
     for (auto &drop : drops_) {
         starts.push_back(drop.position);
+        if (!drop.merging.empty()) {
+            drop.mergeAge += fixedStep;
+            if (drop.mergeAge + 1e-12 >= drop.mergeDuration) {
+                drop.merging.clear();
+                drop.mergeAge = drop.mergeDuration = 0;
+                drop.mergeJoins = {};
+            }
+        }
         const double oldVolume = drop.volume;
         drop.volume += water;
         drop.velocity.x *= oldVolume / drop.volume;
@@ -242,7 +373,7 @@ void DropletSimulation::step()
         pointerTime_ -= fixedStep;
     std::erase_if(pointerMotions_, [](const auto &motion) { return motion.beginSeconds + motion.durationSeconds <= 1e-12; });
     mergeCollisions(starts);
-    std::erase_if(drops_, [this](const auto &drop) { return drop.position.y - drop.radius() > height_; });
+    std::erase_if(drops_, [this](const auto &drop) { return drop.top() > height_; });
     if (targetPopulation_ > 0) {
         rainCredit_ += std::max(1.0, static_cast<double>(targetPopulation_) / 20.0) * fixedStep;
         const auto arrivals = static_cast<std::size_t>(rainCredit_ + 1e-12);
@@ -274,7 +405,15 @@ std::uint64_t DropletSimulation::splash(Vec2 position)
     auto hit = drops_.end();
     double closest = 16; // Fingertip-sized margin beyond the physical cap, in logical pixels.
     for (auto it = drops_.begin(); it != drops_.end(); ++it) {
-        const double distance = std::max(0.0, std::hypot(it->position.x - position.x, it->position.y - position.y) - it->radius());
+        const auto shape = it->surface();
+        double distance = closest;
+        for (std::size_t i = 0; i < shape.count; ++i) {
+            const auto &lobe = shape.lobes[i];
+            const Vec2 delta{position.x - it->position.x - lobe.offset.x, position.y - it->position.y - lobe.offset.y};
+            const double along = (delta.x * lobe.axis.x + delta.y * lobe.axis.y) / lobe.stretch;
+            const double across = (delta.y * lobe.axis.x - delta.x * lobe.axis.y) * lobe.stretch;
+            distance = std::min(distance, std::max(0.0, std::hypot(along, across) - lobe.radius));
+        }
         if (distance < closest) {
             closest = distance;
             hit = it;
@@ -324,7 +463,13 @@ std::uint64_t DropletSimulation::splash(Vec2 position)
         maxRadius = std::max(maxRadius, d.radius());
     }
     // Minimum angular separation is .8 sectors; allow room for the renderer's 1.2x stretch.
-    const double ring = 1.25 * maxRadius / std::sin(.8 * std::numbers::pi / count);
+    double ring = 1.25 * maxRadius / std::sin(.8 * std::numbers::pi / count);
+    // A click can interrupt an extended liquid neck; spread from its whole visible footprint.
+    const auto shape = parent.surface();
+    for (std::size_t i = 0; i < shape.count; ++i) {
+        const auto &lobe = shape.lobes[i];
+        ring = std::max(ring, std::hypot(lobe.offset.x, lobe.offset.y) + lobe.radius * lobe.stretch);
+    }
     const double phase = randomUnit() * 2 * std::numbers::pi;
     const double speed = std::min(600.0, (180 + 12 * radius / lengthScale_) * std::sqrt(lengthScale_));
     Vec2 center{}, momentum{};
@@ -435,11 +580,18 @@ void DropletSimulation::mergeCollisions(const std::vector<Vec2> &starts)
     std::iota(order.begin(), order.end(), 0);
     std::sort(order.begin(), order.end(), [this](auto a, auto b) { return drops_[a].id < drops_[b].id; });
     std::vector<Drop> totals(count);
+    std::vector<std::size_t> members(count);
+    std::vector<double> minimumVolume(count, std::numeric_limits<double>::infinity());
+    std::vector<double> maximumVolume(count);
     for (auto &total : totals)
         total.volume = 0;
     for (const auto i : order) {
-        auto &total = totals[root(i)];
+        const auto group = root(i);
+        auto &total = totals[group];
         const auto &drop = drops_[i];
+        ++members[group];
+        minimumVolume[group] = std::min(minimumVolume[group], drop.volume);
+        maximumVolume[group] = std::max(maximumVolume[group], drop.volume);
         total.id = drops_[root(i)].id;
         total.position.x += drop.position.x * drop.volume;
         total.position.y += drop.position.y * drop.volume;
@@ -449,7 +601,6 @@ void DropletSimulation::mergeCollisions(const std::vector<Vec2> &starts)
         total.velocity.y += drop.velocity.y * drop.volume;
         total.volume += drop.volume;
     }
-    drops_.clear();
     for (auto &total : totals) {
         if (total.volume == 0)
             continue;
@@ -459,7 +610,41 @@ void DropletSimulation::mergeCollisions(const std::vector<Vec2> &starts)
         total.previousPosition.y /= total.volume;
         total.velocity.x /= total.volume;
         total.velocity.y /= total.volume;
-        drops_.push_back(total);
+    }
+
+    for (const auto i : order) {
+        const auto group = root(i);
+        auto &total = totals[group];
+        if (members[group] == 1) {
+            total = std::move(drops_[i]); // Preserve unrelated in-progress transitions.
+            continue;
+        }
+        const auto &drop = drops_[i];
+        auto shape = drop.surface();
+        for (std::size_t j = 0; j < shape.count; ++j) {
+            auto &lobe = shape.lobes[j];
+            lobe.offset.x += drop.position.x - total.position.x;
+            lobe.offset.y += drop.position.y - total.position.y;
+            lobe.weight *= drop.volume / total.volume;
+        }
+        if (!total.merging.empty()) {
+            DropSurface existing;
+            existing.count = total.merging.size();
+            std::copy(total.merging.begin(), total.merging.end(), existing.lobes.begin());
+            existing.joins = total.mergeJoins;
+            shape = joinSurfaces(existing, shape);
+        }
+        total.merging.assign(shape.lobes.begin(), shape.lobes.begin() + shape.count);
+        total.mergeJoins = shape.joins;
+    }
+    drops_.clear();
+    for (std::size_t group = 0; group < count; ++group) {
+        auto &total = totals[group];
+        if (!members[group]) continue;
+        if (members[group] > 1) {
+            total.mergeDuration = .09 + .11 * std::cbrt(minimumVolume[group] / maximumVolume[group]);
+        }
+        drops_.push_back(std::move(total));
     }
     std::sort(drops_.begin(), drops_.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
 }

@@ -25,9 +25,10 @@ public:
 
 private:
     std::array<std::unique_ptr<QOpenGLFramebufferObject>, 2> surfaces_;
-    std::unique_ptr<QOpenGLShaderProgram> caps_, history_;
+    std::unique_ptr<QOpenGLShaderProgram> caps_, history_, coalescence_;
     QSizeF logicalSize_;
     GLuint vao_ = 0, vbo_ = 0;
+    GLuint mergeVao_ = 0, mergeVbo_ = 0;
     int front_ = 0;
     bool hasFrame_ = false;
 };
