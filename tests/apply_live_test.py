@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -12,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(shutil.which("kwriteconfig6"), "requires KDE KConfig tools")
 class ApplyLiveTest(unittest.TestCase):
-    def test_reapply_selects_right_first_balanced_tree_and_drag_to_float(self):
+    def test_window_policy_sets_balanced_tree_and_clears_floating_exclusions(self):
         with tempfile.TemporaryDirectory(prefix="arasaka-tiling-test-") as temp:
             home = Path(temp)
             config_dir = home / "config"
@@ -21,7 +22,7 @@ class ApplyLiveTest(unittest.TestCase):
             config_path.write_text(
                 "[Plugins]\nunrelatedEnabled=true\n"
                 "[MouseBindings]\nCommandAllKey=Meta\n"
-                "[Script-polonium]\nDefaultEngine=2\n"
+                "[Script-arasaka-polonium]\nDefaultEngine=2\n"
                 "BTreeInsertionStyle=1\nBTreeSwapInsertSide=false\n"
                 "BTreeRotateLayout=true\nBTreeInsertInActive=true\n"
                 "WindowDragPolicy=1\nIgnoreWindowClasses=custom-app\n"
@@ -29,14 +30,11 @@ class ApplyLiveTest(unittest.TestCase):
             tools = home / "tools"
             tools.mkdir()
             (tools / "kwriteconfig6").symlink_to(shutil.which("kwriteconfig6"))
-            # Exercise only the tiling writes, never the full desktop installer.
-            script = (ROOT / "bin/apply-live").read_text()
-            section = "\n".join(
-                line for line in script.splitlines()
-                if line.startswith("kwriteconfig6 --file kwinrc --group Script-polonium ")
-            )
+            (tools / "kreadconfig6").symlink_to(shutil.which("kreadconfig6"))
+            # Execute the real scoped KConfig writer without deploying a package.
+            section = f"import runpy; runpy.run_path({str(ROOT / 'bin/apply-window-policy')!r})['configure']('test-version')"
             result = subprocess.run(
-                [shutil.which("bash"), "-eu", "-c", section],
+                [sys.executable, "-c", section],
                 env={"HOME": temp, "XDG_CONFIG_HOME": str(config_dir),
                      "XDG_CACHE_HOME": str(home / "cache"), "PATH": str(tools),
                      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent-test-bus"},
@@ -49,13 +47,14 @@ class ApplyLiveTest(unittest.TestCase):
             expected = {
                 "DefaultEngine": "0", "BTreeInsertionStyle": "0",
                 "BTreeSwapInsertSide": "true", "BTreeRotateLayout": "false",
-                "BTreeInsertInActive": "false", "WindowDragPolicy": "2",
+                "BTreeInsertInActive": "false", "WindowDragPolicy": "0",
                 "Borders": "4",
-                "IgnoreWindowClasses": "custom-app",
+                "IgnoreWindowClasses": "", "UntileWindowClasses": "",
+                "TilePopups": "true", "RuntimeVersion": "test-version",
             }
             for key, value in expected.items():
                 with self.subTest(key=key):
-                    self.assertEqual(config["Script-polonium"].get(key), value)
+                    self.assertEqual(config["Script-arasaka-polonium"].get(key), value)
             self.assertEqual(dict(config["Plugins"]), {"unrelatedEnabled": "true"})
             self.assertEqual(dict(config["MouseBindings"]), {"CommandAllKey": "Meta"})
 
@@ -98,7 +97,7 @@ class ApplyLiveTest(unittest.TestCase):
             self.assertEqual(dict(config["Windeco"]), {"WindowCornerRadius": "3"})
             self.assertEqual(dict(config["TitleBarOpacity"]), {"ActiveTitleBarOpacity": "92"})
 
-    def test_reapply_restores_titlebars_without_blocking_pid_scoped_quake(self):
+    def test_reapply_retires_forced_frames_without_blocking_pid_scoped_quake(self):
         with tempfile.TemporaryDirectory(prefix="arasaka-decoration-test-") as temp:
             config_dir = Path(temp) / "config"
             klassy_path = config_dir / "klassy/klassyrc"
@@ -115,15 +114,10 @@ class ApplyLiveTest(unittest.TestCase):
                 "[arasaka-frame]\nnoborder=false\nnoborderrule=2\n"
                 "[custom-rule]\nabove=true\n"
             )
-            script = (ROOT / "bin/apply-live").read_text()
-            section = "\n".join(
-                line for line in script.splitlines()
-                if line.startswith("kwriteconfig6 --file klassy/klassyrc --group 'Windeco Exception 0' ")
-                or line.startswith("kwriteconfig6 --file kwinrulesrc --group arasaka-frame ")
-            )
+            section = f"import runpy; runpy.run_path({str(ROOT / 'bin/apply-window-policy')!r})['configure']('test-version')"
             for _ in range(2):
                 result = subprocess.run(
-                    [shutil.which("bash"), "-eu", "-c", section],
+                    [sys.executable, "-c", section],
                     env={"HOME": temp, "XDG_CONFIG_HOME": str(config_dir),
                          "PATH": str(Path(shutil.which("kwriteconfig6")).parent),
                          "DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent-test-bus"},
@@ -141,8 +135,8 @@ class ApplyLiveTest(unittest.TestCase):
                 rules = configparser.ConfigParser()
                 rules.read(rules_path)
                 self.assertEqual(rules["arasaka-frame"]["noborder"], "false")
-                self.assertEqual(rules["arasaka-frame"]["noborderrule"], "3",
-                                 "Apply Initially allows the existing PID-scoped Quake override")
+                self.assertEqual(rules["arasaka-frame"]["noborderrule"], "0",
+                                 "retired frame rule must not force server decorations onto CSD apps")
                 self.assertEqual(dict(rules["custom-rule"]), {"above": "true"})
 
     def test_generated_padding_script_updates_every_screen_to_eight(self):

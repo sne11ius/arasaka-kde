@@ -383,38 +383,101 @@ fresh login with the original owner display disconnected remain manual checks.
 
 ## Window Tiling
 
-Polonium uses **Binary Tree** with **Shallow** insertion: new windows split the
-least-deep branches instead of filling a center-master/three-column layout.
-**Swap Insert Side** is enabled, so the third window splits the right half first;
-the fourth splits the left half. This also mirrors new-window placement within
-each split. Layout rotation and insertion into the active tile are disabled, so
-automatic placement follows the balanced tree independently of focus.
+Application windows and dialogs now use **forced automatic tiling**. The managed
+Polonium adaptation keeps **Binary Tree / Shallow** insertion, **Swap Insert Side**,
+and **8 logical px padding**. New windows split the least-deep branch, with the
+third window splitting the right half and the fourth splitting the left. Placement
+is independent of focus; rotation and active-tile insertion are disabled.
 
-**Window Dragging Policy: Never Tile** lets a window dragged out of its tile stay
-floating. New windows still tile automatically. Super+left-drag and
-Super+right-drag remain KWin's move and resize controls; resizing a tiled window
-can still adjust the shared tile boundaries rather than detach it.
+**Dragging between displays is supported.** Grab the title bar or use
+**Super+left-drag**; while dragging, the window is temporarily released from its
+tile. On drop it joins the destination display's automatic layout. A same-display
+drop also retiles, and cancelling a drag restores the original display. Mouse
+resizing is cancelled inside KWin. Maximize, fullscreen, manual untiling and the
+old floating toggle cannot leave an ordinary window outside the layout.
+Minimize/restore and close remain available. **Super+H/J/K/L** focuses
+adjacent tiles, **Super+Shift+H/J/K/L** rearranges windows, and
+**Super+Ctrl+H/J/K/L** resizes shared tile boundaries. The per-output settings menu
+and alternative layout engines are disabled for this managed policy.
 
-KWin tile padding is **8 logical pixels** on every current screen, exposing the
-colored wallpaper between windows and around the screen edges. Klassy's thin
-outlines are disabled for both active and inactive windows; shadows and transparency
-are unchanged. Normal applications retain titlebars and window buttons. The old
-catch-all Klassy `Windeco Exception 0` is disabled on reapply; the frame rule uses
-**Apply Initially**, not **Force**, so it does not block window-specific changes.
-Only the Stream Deck **Quake Konsole** is intentionally borderless: the existing
-`streamdeck-scripts/konsole-quake-toggle.sh` identifies its separate process through
-`/tmp/konsole-quake.pid` and sets `noBorder=true` for that PID. Do not replace this
-with a Konsole-class or window-title exception: ordinary Konsole windows share the
-app ID, and terminal titles change. No desktop restart is needed for the decoration
-settings; reload KWin configuration. An already-running Quake window whose border
-state was overridden by the old Force rule needs its PID-scoped `noBorder=true`
-reapplied without restarting the terminal.
+**The only floating application window is the Stream Deck Quake Konsole.** The
+native helper watches `/tmp/konsole-quake.pid`, verifies ownership and the running
+Konsole executable, and selects one non-transient top-level window from that
+process. Ordinary Konsole windows and Konsole dialogs still tile. Late PID
+registration, minimization, restoration and tiler reloads preserve the exception.
+The existing launcher keeps its borderless, always-on-top placement and toggle;
+its old Polonium floating-toggle call is now harmless. No title matching or broad
+Konsole-class exclusion is used. Menus, tooltips, desktop surfaces and other
+non-application surfaces are not layout tiles.
 
-`bin/apply-live` persists these defaults. Polonium reads configuration when its
-script starts, so changing its layout defaults requires a script reload or a new
-login to affect an already-running instance. Padding and decoration settings can
-be refreshed live without restarting Polonium. Its per-output settings menu can
-override the default layout for the current output/desktop/activity.
+Applications use their **native decoration preference**: client-decorated apps
+keep their own controls, while apps such as Dolphin receive KDE's title bar.
+The former catch-all `arasaka-frame` rule is retired (`noborderrule=0`): even
+**Apply Initially** with `noborder=false` forced an extra server decoration onto
+client-decorated applications. The old Klassy titlebar-hiding exception stays
+disabled. Thin outlines remain off. Fixed-size windows, including pinentry, get
+a larger maximum-size allowance so KWin accepts their tile membership; their
+minimum content sizes remain respected.
+
+Apply just this policy inside the target Plasma session, without sudo:
+
+```sh
+./bin/apply-window-policy
+```
+
+`apply-live` calls the same command. It fetches the SHA-256-pinned Polonium v1.2.1
+package, applies `lib/arasaka_polonium.py`, builds `native/window-policy/`, and
+installs `${XDG_DATA_HOME:-$HOME/.local/share}/kwin/scripts/arasaka-polonium`.
+The upstream `polonium` package remains installed but disabled. Managed settings
+live in `[Script-arasaka-polonium]` in `kwinrc`; old upstream exclusions do not
+override forced tiling. The helper needs a C++20 compiler, CMake, ECM, KWin headers
+and library, Qt 6 Quick/DBus/Widgets development packages, and KF6 Config and
+WindowSystem development packages. Deployment also requires Python 3, KDE KConfig
+tools, `qdbus6`, and `kpackagetool6`; dependencies are not installed automatically.
+
+Before replacing anything, the command builds and validates the package, then
+prints a private backup under
+`${XDG_STATE_HOME:-$HOME/.local/state}/arasaka-kde/backups/window-policy-*` containing
+`kwinrc`, `kwinrulesrc`, `klassy/klassyrc`, and the previous managed package if any.
+It reloads the tiler and rebuilds existing layouts, without restarting KWin,
+Plasma or applications. Versioned runtime paths and native module names avoid
+stale QML/plugin caches. Completion requires the running helper to report the
+expected source versions and all visible application windows in the requested
+state. Inspect its read-only report with:
+
+```sh
+qdbus6 org.kde.KWin /ArasakaWindowPolicy org.arasaka.WindowPolicy1.report
+```
+
+For a fallback, disable `arasaka-polonium` and re-enable `polonium` in KWin Scripts,
+or restore the saved settings and managed package, then reconfigure KWin. Restoring
+the retired frame rule also restores its duplicate-decoration behavior.
+
+Build and run the opt-in integration checks in a private virtual KWin session:
+
+```sh
+./bin/apply-window-policy --stage-only /tmp/opencode/policy-package
+python3 tests/window_policy_smoke.py /tmp/opencode/policy-package
+```
+
+The staging directory must be empty/nonexistent. The tests use disposable Qt
+windows, a fixed-size dialog, a real pinentry confirmation (no credentials), and
+a separate disposable Konsole. They check decorations, actual tile membership,
+cross-display dragging on two virtual outputs, same-display drops and cancellation,
+resize/maximize/fullscreen rejection, minimize/restore, manual detach, all-activity
+windows, PID validation and registration, and reloads with existing/minimized windows. Test
+artifacts remain under `/tmp/opencode/window-policy-*`; the live home and session
+are not used. KWin 6.7.4's isolated compositor and the running 6.7.2 session have
+identical window/workspace API headers for this helper.
+
+Applied in the live session on 2026-09-10. Readback confirmed the existing Quake
+process remained the sole floating application while Firefox, Mattermost, Edge
+and Telegram were tiled. Live disposable SSD/CSD windows and a fixed-size dialog
+also enrolled and the layout reconverged after closing them. The two-output
+isolated suite passed cross-display dragging, same-output drops and cancellation.
+The original pre-policy backup is
+`$HOME/.local/state/arasaka-kde/backups/window-policy-ldr9wud3/`; later reapply
+backups contain already-managed settings.
 
 ## Authentication Prompts
 
@@ -432,15 +495,15 @@ To apply only this policy in the running Plasma session:
 ```
 
 `apply-live` also calls this command. It preserves existing window rules and
-Polonium exclusions, saves `kwinrulesrc` and `kwinrc` under
+legacy upstream Polonium exclusions, saves `kwinrulesrc` and `kwinrc` under
 `${XDG_STATE_HOME:-$HOME/.local/state}/arasaka-kde/backups/auth-window-rules-*`,
 and reloads KWin's rules without restarting Konsole or Polonium. Keep these
 backups local because they can contain personal settings.
 
-Stacking changes apply immediately. The added Polonium exclusions keep these
-prompts floating after Polonium's next reload or login; the command deliberately
-does not restart the tiler and rebuild the current window layout. No key-agent,
-credential-storage, or SSH/GPG security settings are changed.
+Stacking changes apply immediately. Under the managed forced-tiling policy above,
+these prompts **tile like other dialogs**; the old upstream Polonium exclusions
+are inactive. The standalone authentication command only reloads window rules.
+No key-agent, credential-storage, or SSH/GPG security settings are changed.
 
 Verified in the live Plasma session on 2026-09-08 with auto-closing confirmation
 dialogs from both helpers on Wayland and XWayland: all four opened above the

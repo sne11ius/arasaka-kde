@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Install the managed Polonium policy, or build a package without touching KDE."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import zipfile
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+from arasaka_polonium import adapt
+
+PLUGIN = "arasaka-polonium"
+
+
+def run(*args, **kwargs):
+    return subprocess.run(args, check=True, text=True, **kwargs)
+
+
+def config(file, group, key, value):
+    run("kwriteconfig6", "--file", file, "--group", group, "--key", key, str(value))
+
+
+def configure(version):
+    group = "Script-" + PLUGIN
+    values = dict(RuntimeVersion=version, DefaultEngine=0, BTreeInsertionStyle=0,
+                  BTreeSwapInsertSide="true", BTreeRotateLayout="false", BTreeInsertInActive="false",
+                  Borders=4, WindowDragPolicy=0, TilePopups="true", TiledWindowsBelow="false",
+                  IgnoreWindowClasses="", IgnoreWindowCaptions="", UntileWindowClasses="", UntileWindowCaptions="")
+    for key, value in values.items():
+        config("kwinrc", group, key, value)
+    config("kwinrulesrc", "arasaka-frame", "noborderrule", 0)
+    config("klassy/klassyrc", "Windeco Exception 0", "Enabled", "false")
+    # KWin's native Tile.manage rejects fixed-size clients. Permit a larger
+    # maximum while preserving minimum content sizes, including pinentry's
+    # SetFixedSize dialog. Clients can retain compact contents inside their tile.
+    rule = "arasaka-tiling-size"
+    existing = run("kreadconfig6", "--file", "kwinrulesrc", "--group", "General", "--key", "rules",
+                   capture_output=True).stdout.strip().split(",")
+    rules = [rule, *(item for item in existing if item and item != rule)]
+    for key, value in dict(Description="Arasaka permit automatic tiling of fixed-size windows",
+                          types=33, wmclass=".*", wmclassmatch=3,
+                          maxsize="32767,32767", maxsizerule=2).items():
+        config("kwinrulesrc", rule, key, value)
+    config("kwinrulesrc", "General", "rules", ",".join(rules))
+    config("kwinrulesrc", "General", "count", len(rules))
+
+
+def wait_for_policy(version, native_revision):
+    deadline = time.monotonic() + 10
+    last = "no native report"
+    while time.monotonic() < deadline:
+        response = subprocess.run(["qdbus6", "org.kde.KWin", "/ArasakaWindowPolicy",
+                                   "org.arasaka.WindowPolicy1.report"], capture_output=True, text=True)
+        if response.returncode == 0:
+            report = json.loads(response.stdout)
+            last = report
+            if report["version"] == version and report["nativeRevision"] == native_revision and all(
+                (w["quake"] and not w["tiled"] and w["noBorder"] and w["keepAbove"])
+                or (not w["quake"] and (w["minimized"] or w["tiled"])
+                    and not (w["maximized"] or w["fullscreen"] or w["moving"] or w["resizing"]))
+                for w in report["windows"]
+            ):
+                return report
+        time.sleep(0.1)
+    raise RuntimeError(f"Window policy did not converge: {last}")
+
+
+def stage(destination, work):
+    archive = run(str(ROOT / "bin/fetch-components"), "polonium", capture_output=True).stdout.strip()
+    with zipfile.ZipFile(archive) as package:
+        for entry in package.infolist():
+            path = Path(entry.filename)
+            if path.is_absolute() or ".." in path.parts or (entry.external_attr >> 16) & 0o170000 == 0o120000:
+                raise ValueError("Unsafe path in Polonium archive")
+        package.extractall(work / "upstream")
+    source = work / "upstream/pkg"
+    adapt(source)
+    build = work / "build"
+    run("cmake", "-S", str(ROOT / "native/window-policy"), "-B", str(build), "-DCMAKE_BUILD_TYPE=Release")
+    run("cmake", "--build", str(build), "--parallel", "2")
+    native = json.loads((build / "policy-build.json").read_text())
+    native_dir = Path(native["directory"])
+    # Native modules must retain one URL per revision. Qt refuses registering
+    # the same protected URI from a second runtime directory on script reapply.
+    helper = destination / "contents/native" / native["revision"]
+    helper.mkdir(parents=True)
+    for file in [native_dir / "qmldir", *native_dir.glob("*.qmltypes"), *native_dir.glob("*.so")]:
+        shutil.copy2(file, helper / file.name)
+    entry = source / "contents/ui/main.qml"
+    entry.write_text(entry.read_text().replace('import "policy" as Arasaka;',
+        f'import "../../../native/{native["revision"]}" as Arasaka;'))
+
+    digest = hashlib.sha256()
+    for path in sorted((source / "contents").rglob("*")):
+        if path.is_file():
+            digest.update(str(path.relative_to(source)).encode())
+            digest.update(path.read_bytes())
+    version = digest.hexdigest()[:20]
+    destination.mkdir(parents=True, exist_ok=True)
+    runtime = destination / "contents/runtime" / version
+    shutil.copytree(source / "contents", runtime)
+    (destination / "contents/ui").mkdir()
+    (destination / "contents/code").mkdir()
+    (destination / "contents/config").mkdir()
+    shutil.copy2(source / "contents/config/main.xml", destination / "contents/config/main.xml")
+    shutil.copy2(source / "contents/ui/config.ui", destination / "contents/ui/config.ui")
+    (destination / "contents/code/main.js").write_text("// Declarative entry point: ui/main.qml\n")
+    # A stable loader plus content-addressed source avoids QQmlEngine's old JS
+    # module cache on policy reloads. Upstream's package remains installed.
+    (destination / "contents/ui/main.qml").write_text('''import QtQuick
+import org.kde.kwin
+Loader {
+    source: "../runtime/" + KWin.readConfig("RuntimeVersion", "") + "/ui/main.qml"
+}
+''')
+    metadata = json.loads((source / "metadata.json").read_text())
+    metadata["KPlugin"].update(Id=PLUGIN, Name="Arasaka Forced Tiling (Polonium)",
+                               License="MIT AND EUPL-1.2 AND GPL-3.0-or-later")
+    metadata["X-KDE-PluginKeyword"] = PLUGIN
+    (destination / "metadata.json").write_text(json.dumps(metadata, indent=4) + "\n")
+    (destination / "runtime.json").write_text(json.dumps({"version": version, "nativeRevision": native["revision"]}) + "\n")
+    shutil.copy2(ROOT / "LICENSES/Polonium-MIT.txt", destination / "LICENSE-Polonium.txt")
+    shutil.copy2(ROOT / "LICENSE", destination / "LICENSE-Arasaka.txt")
+    shutil.copy2(ROOT / "LICENSES/GPL-3.0-or-later.txt", destination / "LICENSE-Native-Combined.txt")
+    return version
+
+
+def reject_symlinks(path):
+    for item in (path, *path.parents):
+        if item.is_symlink():
+            raise ValueError(f"Refusing symlinked deployment path: {item}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--stage-only", type=Path, help="build into an empty directory; no session changes")
+    args = parser.parse_args()
+    if args.stage_only:
+        target = args.stage_only.absolute()
+        reject_symlinks(target)
+        if target.exists() and any(target.iterdir()):
+            parser.error("--stage-only requires an empty/nonexistent directory")
+        with tempfile.TemporaryDirectory(prefix="arasaka-window-policy-") as directory:
+            stage(target, Path(directory))
+        print(f"Staged window policy: {target}")
+        return
+
+    for tool in ("kwriteconfig6", "kreadconfig6", "qdbus6", "cmake", "kpackagetool6"):
+        if not shutil.which(tool):
+            raise RuntimeError(f"Required command not found: {tool}")
+    run("qdbus6", "org.kde.KWin", "/KWin", "org.freedesktop.DBus.Peer.Ping", capture_output=True)
+    home = Path.home()
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))
+    data_home = Path(os.environ.get("XDG_DATA_HOME", home / ".local/share"))
+    state_home = Path(os.environ.get("XDG_STATE_HOME", home / ".local/state"))
+    target = data_home / "kwin/scripts" / PLUGIN
+    backup_root = state_home / "arasaka-kde/backups"
+    for path in (target, backup_root, config_home / "kwinrc", config_home / "kwinrulesrc",
+                 config_home / "klassy/klassyrc"):
+        reject_symlinks(path)
+    with tempfile.TemporaryDirectory(prefix="arasaka-window-policy-") as directory:
+        work = Path(directory)
+        package = work / "package"
+        version = stage(package, work)
+        run("kpackagetool6", "--type", "KWin/Script", "--show", str(package), capture_output=True)
+        backup_root.mkdir(parents=True, exist_ok=True)
+        backup = Path(tempfile.mkdtemp(prefix="window-policy-", dir=backup_root))
+        print(f"Window policy backup: {backup}", flush=True)
+        for file in ("kwinrc", "kwinrulesrc", "klassy/klassyrc"):
+            source = config_home / file
+            if source.exists():
+                (backup / file).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, backup / file)
+                (backup / file).chmod(0o600)
+        if target.exists():
+            shutil.copytree(target, backup / "package")
+        # Keep previous hashed runtimes available while their QML/native objects
+        # are being released. Only this managed package is updated.
+        target.mkdir(parents=True, exist_ok=True)
+        for native_dir in (package / "contents/native").iterdir():
+            native_target = target / "contents/native" / native_dir.name
+            if not native_target.exists():
+                native_target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(native_dir, native_target)
+        # Never truncate/rewrite a shared library mapped into the running KWin.
+        shutil.copytree(package, target, dirs_exist_ok=True, ignore=shutil.ignore_patterns("native"))
+        configure(version)
+        # Stop the competing tiler before starting the managed version.
+        config("kwinrc", "Plugins", "poloniumEnabled", "false")
+        config("kwinrc", "Plugins", PLUGIN + "Enabled", "false")
+        run("qdbus6", "org.kde.KWin", "/KWin", "org.kde.KWin.reconfigure")
+        for name in ("polonium", PLUGIN):
+            run("qdbus6", "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.unloadScript", name,
+                capture_output=True)
+        config("kwinrc", "Plugins", PLUGIN + "Enabled", "true")
+        run("qdbus6", "org.kde.KWin", "/KWin", "org.kde.KWin.reconfigure")
+        # reconfigure schedules loading asynchronously; an immediate
+        # isScriptLoaded check can still see false even on a successful apply.
+        report = wait_for_policy(version, json.loads((package / "runtime.json").read_text())["nativeRevision"])
+    print(f"Forced tiling verified for {len(report['windows'])} application windows (including the Quake exception).")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+        sys.exit(f"Window policy failed: {error}")

@@ -39,6 +39,14 @@ Klassy, Better Blur DX, Polonium, Panel Colorizer, Application Title Bar, and Ku
 remain licensed by their respective upstream projects. Their pinned source
 locations are recorded in `manifest/components.tsv`.
 
+`lib/arasaka_polonium.py` adapts the MIT-licensed Polonium v1.2.1 package by
+Vaughan Milliman into `arasaka-polonium`, retaining its binary-tree layout engine
+and keyboard navigation. Its upstream copyright and permission notice are copied
+from the release's `license.txt` into `LICENSES/Polonium-MIT.txt` and installed
+with the package. The adaptation and `native/window-policy/` are original EUPL-1.2
+project code. The helper links to GPL-licensed KWin; the combined native work uses
+the GPL-3.0-or-later compatibility terms, with both license texts installed.
+
 The fallback Plasma shell artwork and icon set come from Daemon 2.0 by
 MathisP75, licensed under GPL-3.0 and adapted from Simply Circles where noted
 upstream. The session lock-screen UI comes from Silent KLockscreen by Khip01,

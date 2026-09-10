@@ -139,33 +139,12 @@ kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key theme Klassy --no
 kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key BorderSize Normal --notify
 kwriteconfig6 --file kwinrc --group Desktops --key Number 1 --notify
 kwriteconfig6 --file kwinrc --group Desktops --key Rows 1 --notify
-kwriteconfig6 --file kwinrc --group Plugins --key poloniumEnabled --type bool true --notify
 kwriteconfig6 --file kwinrc --group Plugins --key overviewEnabled --type bool true --notify
 kwriteconfig6 --file kwinrc --group Plugins --key wobblywindowsEnabled --type bool false --notify
 kwriteconfig6 --file kwinrc --group Windows --key BorderSnapZone 8 --notify
 kwriteconfig6 --file kwinrc --group Windows --key WindowSnapZone 8 --notify
-kwriteconfig6 --file kwinrc --group Script-polonium --key DefaultEngine 0 --notify
-kwriteconfig6 --file kwinrc --group Script-polonium --key BTreeInsertionStyle 0 --notify
-kwriteconfig6 --file kwinrc --group Script-polonium --key BTreeSwapInsertSide --type bool true --notify
-kwriteconfig6 --file kwinrc --group Script-polonium --key BTreeRotateLayout --type bool false --notify
-kwriteconfig6 --file kwinrc --group Script-polonium --key BTreeInsertInActive --type bool false --notify
-kwriteconfig6 --file kwinrc --group Script-polonium --key WindowDragPolicy 2 --notify
-kwriteconfig6 --file kwinrc --group Script-polonium --key Borders 4 --notify
-
-window_rules=$(kreadconfig6 --file kwinrulesrc --group General --key rules)
-if [[ ,$window_rules, != *,arasaka-frame,* ]]; then
-  window_rules=${window_rules:+$window_rules,}arasaka-frame
-fi
-kwriteconfig6 --file kwinrulesrc --group General --key rules "$window_rules" --notify
-kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key Description 'Arasaka uniform program frames' --notify
-kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key types 1 --notify
-kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key wmclass '.*' --notify
-kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key wmclassmatch 3 --notify
-kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key noborder --type bool false --notify
-# Apply Initially, not Force: the Quake toggle must be allowed to set noBorder.
-kwriteconfig6 --file kwinrulesrc --group arasaka-frame --key noborderrule 3 --notify
-
 "$repo_root/bin/apply-auth-window-rules"
+"$repo_root/bin/apply-window-policy"
 
 kwriteconfig6 --file klassy/klassyrc --group Windeco --key ButtonIconStyle 2 --notify
 kwriteconfig6 --file klassy/klassyrc --group Windeco --key ButtonShape 5 --notify
