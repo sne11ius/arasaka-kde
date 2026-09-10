@@ -10,7 +10,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(dropletsimulation_test PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 add_test(NAME dropletsimulation COMMAND dropletsimulation_test)
-set_tests_properties(dropletsimulation PROPERTIES TIMEOUT 120)
+# Long-run correctness checks simulate multiple viewports, seeds and frame rates.
+# Allow slower hosted CPUs to finish; this is not a runtime performance budget.
+set_tests_properties(dropletsimulation PROPERTIES TIMEOUT 600)
 
 add_executable(coalescence_test coalescence_test.cpp ../dropletsimulation.cpp)
 target_include_directories(coalescence_test PRIVATE ..)

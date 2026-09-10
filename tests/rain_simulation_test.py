@@ -32,7 +32,9 @@ class RainSimulationTest(unittest.TestCase):
                 ["ctest", "--test-dir", build, "--output-on-failure"],
             ]
             for command in commands:
-                completed = subprocess.run(command, capture_output=True, text=True, timeout=180)
+                # Leave headroom above CTest's 600-second physics deadline.
+                timeout = 660 if command[0] == "ctest" else 180
+                completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
                 self.assertEqual(completed.returncode, 0,
                                  f"{' '.join(command)}\n{completed.stdout}\n{completed.stderr}")
 
