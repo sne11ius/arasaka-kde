@@ -947,7 +947,7 @@
  
      // Authoritative config map for ShaderSystem — works in all three hosts.
      readonly property var effectiveConfiguration: {
-@@ -61,24 +62,33 @@
+@@ -61,24 +62,39 @@
          return configuration
      }
  
@@ -984,6 +984,12 @@
      }
 +    onParentChanged: updateInputHost()
 +    Window.onWindowChanged: updateInputHost()
++    // Subtree window changes reach children before their parent's attached Window.
++    // Retry classification when the parent catches up (e.g. a secondary desktop).
++    Connections {
++        target: main.parent ? main.parent.Window : null
++        function onWindowChanged() { main.updateInputHost() }
++    }
 +    Connections {
 +        target: main.Window.window
 +        ignoreUnknownSignals: true
@@ -995,7 +1001,7 @@
          if (pluginAvailable) {
              console.log("Shader Wallpaper: Plugin found!")
              pluginLoader.active = true
-@@ -183,14 +193,8 @@
+@@ -183,14 +199,8 @@
      }
      Binding {
          target: pluginLoader.item

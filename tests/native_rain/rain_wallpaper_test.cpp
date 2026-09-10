@@ -124,9 +124,10 @@ private Q_SLOTS:
         const auto unclassifiedSource = viewSource(QStringLiteral("Unclassified.qml"));
         const auto loginSource = viewSource(QStringLiteral("plasma/login/wallpaper/LockScreen.qml"));
         QVERIFY(!lockSource.isEmpty() && !desktopSource.isEmpty() && !loginSource.isEmpty());
-        PlasmaQuick::QuickViewSharedEngine lockView, desktopView, loginView, unknownView;
+        PlasmaQuick::QuickViewSharedEngine lockView, desktopView, secondDesktopView, loginView, unknownView;
         lockView.setSource(lockSource);
         desktopView.setSource(desktopSource);
+        secondDesktopView.setSource(desktopSource);
         loginView.setSource(loginSource); // Both match patterns: login must win.
         lockView.resize(320, 240);
         lockView.show();
@@ -173,7 +174,35 @@ private Q_SLOTS:
         QCOMPARE(engine->property("mouseEnabled").toBool(), true);
         QCOMPARE(tracker->property("enabled").toBool(), !rain);
         QCOMPARE(area->property("enabled").toBool(), !rain);
+
+        // Plasma can attach/move a whole containment after its wallpaper is loaded.
+        // The wallpaper's own parent stays the same while its ancestors change windows.
+        item->setParentItem(&newParent);
+        forbidGeneric = true;
+        newParent.setParentItem(nullptr);
+        QCOMPARE(engine->property("mouseEnabled").toBool(), false);
+        forbidGeneric = false;
+        newParent.setParentItem(desktopView.rootObject());
+        QCOMPARE(engine->property("mouseEnabled").toBool(), true);
+        newParent.setParentItem(secondDesktopView.rootObject());
+        QCOMPARE(engine->property("mouseEnabled").toBool(), true);
+        QCOMPARE(tracker->property("enabled").toBool(), !rain);
+        QCOMPARE(area->property("enabled").toBool(), !rain);
+        forbidGeneric = true;
+        newParent.setParentItem(lockView.rootObject());
+        QCOMPARE(engine->property("mouseEnabled").toBool(), rain && !previous);
+        QVERIFY(!tracker->property("enabled").toBool());
+        QVERIFY(!area->property("enabled").toBool());
+        QVERIFY(!area->property("hoverEnabled").toBool());
+        newParent.setParentItem(loginView.rootObject());
+        QCOMPARE(engine->property("mouseEnabled").toBool(), false);
+        QVERIFY(!tracker->property("enabled").toBool());
+        QVERIFY(!area->property("enabled").toBool());
+        QVERIFY(!area->property("hoverEnabled").toBool());
+        QVERIFY2(leaks.isEmpty(), qPrintable(leaks.join(", ")));
+
         // Reclassify the same attached window without reparenting the wallpaper.
+        forbidGeneric = false;
         item->setParentItem(desktopView.contentItem());
         forbidGeneric = true;
         desktopView.setSource(loginSource);

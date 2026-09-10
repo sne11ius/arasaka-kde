@@ -879,6 +879,9 @@ not a GPU/frame-time benchmark or proof of live Folder View hover delivery.
 The native tests also exercise real Qt clicks at 30 FPS and 75% speed, rendered
 fragment separation, fast press/release delivery, passive button forwarding, and
 pending-click cancellation across pause, input permission, and host changes.
+Wallpaper host tests cover late attachment and whole-container moves between
+desktop windows, so secondary/reconnected screens regain hover and click input
+after their parent window becomes available, while lock/login roles remain scoped.
 Coalescence tests cover intermediate neck/outer-lobe pixels, settling, repeated
 impacts, clicking a merging silhouette, splash-fragment absorption, and the full
 geometry budget. Isolated caps retain their existing height and optical profile.
