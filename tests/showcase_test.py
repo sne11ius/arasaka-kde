@@ -466,6 +466,19 @@ class GuestTest(unittest.TestCase):
 
 
 class GuestPreparationTest(unittest.TestCase):
+    def test_fixture_startup_exports_real_native_plugin_path_and_software_animations(self):
+        from scripts.showcase import guest_setup
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(guest_setup, "HOME", root), patch.object(guest_setup, "PLUGIN_PATH", root / "plugins"):
+                guest_setup.fixture_environment()
+                startup = root / ".config/plasma-workspace/env/arasaka-showcase.sh"
+                result = subprocess.run(["bash", "-c", 'source "$1"; env', "test", str(startup)],
+                                        capture_output=True, text=True, check=True)
+                environment = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+                self.assertEqual(environment.get("QT_PLUGIN_PATH"), str(root / "plugins"))
+                self.assertEqual(environment.get("KWIN_EFFECTS_FORCE_ANIMATIONS"), "1")
+
     def test_native_install_inventory_preserves_cmake_directory_links(self):
         from scripts.showcase import guest_setup
         with tempfile.TemporaryDirectory() as directory:

@@ -245,7 +245,13 @@ def build_visuals(identity):
 def fixture_environment():
     target = HOME / ".config/environment.d/arasaka.conf"
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(f"QT_PLUGIN_PATH={PLUGIN_PATH}\n")
+    values = f"QT_PLUGIN_PATH={PLUGIN_PATH}\nKWIN_EFFECTS_FORCE_ANIMATIONS=1\n"
+    target.write_text(values)
+    # The SSH user manager predates package installation on the first boot;
+    # startplasma must also import these before KWin/plugin discovery starts.
+    startup = HOME / ".config/plasma-workspace/env/arasaka-showcase.sh"
+    startup.parent.mkdir(parents=True, exist_ok=True)
+    startup.write_text("#!/bin/sh\n" + "".join("export " + line + "\n" for line in values.splitlines()))
 
 
 def session_environment():
@@ -273,7 +279,8 @@ def session_environment():
         raise RuntimeError("Plasma's real Wayland socket is unavailable")
     env = dict(os.environ, HOME=str(HOME), USER="demo", LOGNAME="demo", LC_ALL="C.UTF-8",
                XDG_SESSION_TYPE="wayland", XDG_SESSION_ID=session, QT_PLUGIN_PATH=str(PLUGIN_PATH))
-    for key in ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"):
+    for key in ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS",
+                "XDG_CONFIG_DIRS", "XDG_DATA_DIRS", "XDG_CURRENT_DESKTOP", "XDG_MENU_PREFIX"):
         if key in environment:
             env[key] = environment[key]
     # On the first boot dbus-user-session was installed after SSH created the
@@ -370,7 +377,8 @@ def managed_settings(env):
     # Semantic configuration plus source/artwork hashes: no transient PIDs,
     # timestamps, caches or backup-directory names enter convergence checks.
     files = ("kdeglobals", "kwinrc", "kwinrulesrc", "klassy/klassyrc", "kscreenlockerrc",
-             "ksplashrc", "Kvantum/kvantum.kvconfig", "environment.d/arasaka.conf")
+             "ksplashrc", "Kvantum/kvantum.kvconfig", "environment.d/arasaka.conf",
+             "plasma-workspace/env/arasaka-showcase.sh")
     values = {name: (HOME / ".config" / name).read_text() for name in files}
     values["plm"] = Path("/etc/plasmalogin.conf").read_text()
     values["profile"] = (HOME / ".local/share/konsole/Showcase.profile").read_text()

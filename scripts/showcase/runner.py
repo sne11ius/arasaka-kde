@@ -165,6 +165,7 @@ def collect_guest_evidence(guest, run):
     code = """
 import base64, io, pathlib, tarfile
 paths = list(pathlib.Path('/home/demo').glob('showcase-prepare-*.log'))
+paths += list(pathlib.Path('/home/demo/.local/share/sddm').glob('*.log'))
 state = pathlib.Path('/home/demo/.local/state/arasaka-showcase')
 if state.exists():
     paths += [p for p in state.rglob('*') if p.is_file()]
