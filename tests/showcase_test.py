@@ -3,6 +3,7 @@
 
 import contextlib
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.showcase.machine import Guest, QMP, QMPError
+from scripts.showcase import runner
 from scripts.showcase.runner import (
     WorkspaceLock, cloud_config, create_source_bundle, managed_process, verified_download,
 )
@@ -191,6 +193,54 @@ class HostLifecycleTest(unittest.TestCase):
                            check=True, capture_output=True)
             self.assertEqual((root / "clone/content").read_text(), "committed source\n")
 
+    @patch.dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+    def test_source_revision_matches_bundle_when_head_advances_during_creation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            real_run = subprocess.run
+
+            def git(*args):
+                return real_run(["git", *args], cwd=source, check=True,
+                                capture_output=True, text=True).stdout.strip()
+
+            def commit(content):
+                (source / "content").write_text(content)
+                git("add", "content")
+                git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                    "commit", "-m", content)
+                return git("rev-parse", "HEAD")
+
+            git("init", "--initial-branch=fixture")
+            initial = commit("initial source\n")
+            bundled = None
+
+            def advance_around_bundle(command, *args, **kwargs):
+                nonlocal bundled
+                if command[:3] == ["git", "bundle", "create"]:
+                    # Execute real commits and the real bundle command at a
+                    # deterministic boundary; neither Git result is fabricated.
+                    bundled = commit("source included in bundle\n")
+                    result = real_run(command, *args, **kwargs)
+                    commit("source after bundle\n")
+                    return result
+                return real_run(command, *args, **kwargs)
+
+            bundle = root / "SOURCE.bundle"
+            with patch("scripts.showcase.runner.subprocess.run", side_effect=advance_around_bundle):
+                recorded = create_source_bundle(source, bundle)
+            self.assertIsNotNone(bundled)
+            self.assertNotEqual(initial, bundled)
+            self.assertNotEqual(git("rev-parse", "HEAD"), bundled)
+            real_run(["git", "clone", str(bundle), str(root / "clone")],
+                     check=True, capture_output=True)
+            clone_head = real_run(["git", "rev-parse", "HEAD"], cwd=root / "clone",
+                                  check=True, capture_output=True, text=True).stdout.strip()
+            self.assertEqual(clone_head, bundled)
+            self.assertEqual((root / "clone/content").read_text(), "source included in bundle\n")
+            self.assertEqual(recorded, clone_head, "recorded revision must describe the transferred bundle")
+
     def test_cloud_init_allows_graphical_password_but_key_only_ssh(self):
         config = {"guest": {"user": "demo", "uid": 1000,
                             "hostname": "arasaka-showcase", "password": "ArasakaDemo2026"}}
@@ -275,6 +325,105 @@ class HostLifecycleTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("not implemented", result.stderr)
                 self.assertFalse(workspace.exists())
+
+
+class DockerCleanupTest(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.source = self.root / "source"
+        self.source.mkdir()
+        docker = self.root / "docker"
+        # Only the external Docker CLI is replaced; the controller still creates
+        # its real source bundle, runs/reaps processes, and writes diagnostics.
+        docker.write_text(
+            "#!/usr/bin/env python3\nimport os,sys,time\n"
+            "if sys.argv[1] == 'stop' and sys.argv[2] in ('--time', '--timeout') and sys.argv[3] == '15':\n"
+            " print(os.environ['STOP_STDOUT'], flush=True)\n"
+            " print(os.environ['STOP_STDERR'].replace('{name}', sys.argv[4]), file=sys.stderr, flush=True)\n"
+            " time.sleep(float(os.environ.get('STOP_DELAY', '0')))\n"
+            " sys.exit(int(os.environ['STOP_STATUS']))\n"
+            "if sys.argv[1] not in ('info', 'build', 'run'): sys.exit(99)\n")
+        docker.chmod(0o755)
+        self.enterContext(patch.dict(os.environ, PATH=f"{self.root}:{os.environ['PATH']}",
+                                     GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1",
+                                     STOP_STDOUT="stop stdout", STOP_STDERR="stop stderr",
+                                     STOP_STATUS="0", STOP_DELAY="0"))
+        (self.source / "content").write_text("source\n")
+        for args in (["init", "--initial-branch=fixture"], ["add", "."],
+                     ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                      "commit", "-m", "fixture"]):
+            subprocess.run(["git", *args], cwd=self.source, check=True, capture_output=True)
+        self.enterContext(patch.object(runner, "REPO_ROOT", self.source))
+        # KVM access/group lookup is a host prerequisite, independent of cleanup.
+        self.enterContext(patch("scripts.showcase.runner.os.access", return_value=True))
+        real_stat = os.stat
+        self.enterContext(patch("scripts.showcase.runner.os.stat", side_effect=lambda path, *a, **kw:
+                                real_stat(self.root if str(path) == "/dev/kvm" else path, *a, **kw)))
+        self.output = self.enterContext(contextlib.redirect_stdout(io.StringIO()))
+
+    def cleanup_log(self):
+        return next(self.root.glob("run-*/container-cleanup.log")).read_text()
+
+    def test_successful_stop_retains_both_output_streams_and_exit_status(self):
+        runner.run_container(self.root, {})
+        log = self.cleanup_log()
+        for expected in ("stop stdout", "stop stderr", "exit status: 0", "cleanup outcome: stopped"):
+            self.assertIn(expected, log)
+
+    def test_already_removed_container_is_expected_but_diagnostic_is_retained(self):
+        os.environ.update(STOP_STATUS="1", STOP_STDOUT="",
+                          STOP_STDERR="Error response from daemon: No such container: {name}")
+        runner.run_container(self.root, {})
+        log = self.cleanup_log()
+        self.assertIn("No such container: arasaka-showcase-", log)
+        self.assertIn("exit status: 1", log)
+        self.assertIn("cleanup outcome: already-removed", log)
+
+    def test_already_removed_container_with_stdout_notice_is_still_expected(self):
+        # Docker 28 emitted this real stdout notice alongside its missing-container error.
+        notice = "Flag --time has been deprecated, use --timeout instead"
+        os.environ.update(STOP_STATUS="1", STOP_STDOUT=notice,
+                          STOP_STDERR="Error response from daemon: No such container: {name}")
+        runner.run_container(self.root, {})
+        self.assertIn(notice, self.cleanup_log())
+        self.assertIn("cleanup outcome: already-removed", self.cleanup_log())
+
+    def test_unexpected_cleanup_error_prevents_success_and_retains_diagnostics(self):
+        os.environ.update(STOP_STATUS="1", STOP_STDERR="Cannot connect to the Docker daemon")
+        with self.assertRaisesRegex(RuntimeError, "container cleanup failed"):
+            runner.run_container(self.root, {})
+        log = self.cleanup_log()
+        self.assertIn("Cannot connect to the Docker daemon", log)
+        self.assertIn("stop stdout", log)
+        self.assertIn("exit status: 1", log)
+        self.assertIn("cleanup outcome: failed", log)
+        self.assertNotIn("Boot verified", self.output.getvalue())
+
+    def test_missing_container_diagnostic_must_match_the_owned_container(self):
+        os.environ.update(STOP_STATUS="1", STOP_STDOUT="",
+                          STOP_STDERR="Error response from daemon: No such container: unrelated")
+        with self.assertRaisesRegex(RuntimeError, "container cleanup failed"):
+            runner.run_container(self.root, {})
+        self.assertIn("cleanup outcome: failed", self.cleanup_log())
+
+    def test_cleanup_timeout_retains_partial_output_and_propagates(self):
+        os.environ["STOP_DELAY"] = "60"
+        real_run = subprocess.run
+
+        def short_stop_timeout(command, *args, **kwargs):
+            if command[:2] == ["docker", "stop"]:
+                kwargs["timeout"] = 0.1
+            return real_run(command, *args, **kwargs)
+
+        with patch("scripts.showcase.runner.subprocess.run", side_effect=short_stop_timeout):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                runner.run_container(self.root, {})
+        log = self.cleanup_log()
+        self.assertIn("timed out", log)
+        self.assertIn("stop stdout", log)
+        self.assertIn("stop stderr", log)
 
 
 class GuestTest(unittest.TestCase):

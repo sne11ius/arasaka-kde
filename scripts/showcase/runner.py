@@ -95,11 +95,15 @@ def managed_process(command, *, stop_timeout=10, **kwargs):
 
 
 def create_source_bundle(repository, destination):
-    source = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repository, check=True,
-                            capture_output=True, text=True).stdout.strip()
     subprocess.run(["git", "bundle", "create", str(destination), "HEAD"],
                    cwd=repository, check=True)
-    return source
+    # HEAD can advance while Git is creating the bundle. Record the revision
+    # from the completed transport artifact, not the mutable source repository.
+    head = subprocess.run(["git", "bundle", "list-heads", str(destination), "HEAD"],
+                          cwd=repository, check=True, capture_output=True, text=True).stdout.split()
+    if len(head) != 2 or head[1] != "HEAD":
+        raise RuntimeError("source bundle does not advertise a unique HEAD")
+    return head[0]
 
 
 def cloud_config(config, public_key):
@@ -242,6 +246,33 @@ def prepare(workspace, run, config):
     print(f"Boot verified; VM and Xvfb stopped. Evidence: {run}", flush=True)
 
 
+def stop_container(name, log_path):
+    """Retain cleanup evidence; only this --rm container's absence is expected."""
+    command = ["docker", "stop", "--timeout", "15", name]
+    with log_path.open("w") as log:
+        log.write(f"$ {' '.join(command)}\n")
+        log.flush()
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired as error:
+            log.write(f"{error}\nstdout: {error.stdout!r}\nstderr: {error.stderr!r}\n")
+            raise
+        except OSError as error:
+            log.write(f"cleanup could not start: {error}\n")
+            raise
+        log.write(f"exit status: {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}\n")
+        if result.returncode == 0:
+            outcome = "stopped"
+        elif (result.returncode == 1
+              and result.stderr.strip() == f"Error response from daemon: No such container: {name}"):
+            outcome = "already-removed"
+        else:
+            outcome = "failed"
+        log.write(f"cleanup outcome: {outcome}\n")
+        if outcome == "failed":
+            raise RuntimeError(f"container cleanup failed; see {log_path}")
+
+
 def run_container(workspace, config):
     if not os.access("/dev/kvm", os.R_OK | os.W_OK):
         raise RuntimeError("read/write /dev/kvm access is required")
@@ -270,8 +301,7 @@ def run_container(workspace, config):
     finally:
         # The Docker client is not the VM's parent. Reap the container explicitly
         # if the caller was interrupted; --init forwards signals/reaps orphans.
-        subprocess.run(["docker", "stop", "--time", "15", name],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        stop_container(name, run / "container-cleanup.log")
     print(f"Boot verified; container removed. Evidence: {run}", flush=True)
 
 
