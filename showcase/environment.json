@@ -1,0 +1,22 @@
+{
+  "image": {
+    "url": "https://cloud.debian.org/images/cloud/forky/daily/20260911-2598/debian-14-generic-amd64-daily-20260911-2598.qcow2",
+    "algorithm": "sha512",
+    "digest": "d2a938635c87635e0118c4ca16ed36c4353d67dd8fae403ec9fca3b1d56243abeb82734754cec707a286e95b93a982d49617c728fc2678ababbafe1d37110dd8",
+    "checksum_url": "https://cloud.debian.org/images/cloud/forky/daily/20260911-2598/SHA512SUMS"
+  },
+  "apt": {
+    "url": "https://snapshot.debian.org/archive/debian/20260911T000000Z/",
+    "suite": "testing",
+    "components": ["main"]
+  },
+  "display": {"width": 1280, "height": 720, "capture_fps": 30},
+  "vm": {"vcpus": 4, "memory_mib": 6144, "disk_size": "32G", "boot_timeout": 600},
+  "guest": {
+    "user": "demo",
+    "uid": 1000,
+    "hostname": "arasaka-showcase",
+    "password": "ArasakaDemo2026",
+    "repository": "/home/demo/arasaka-kde"
+  }
+}
