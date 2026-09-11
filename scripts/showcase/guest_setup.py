@@ -276,8 +276,16 @@ def session_environment():
     for key in ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"):
         if key in environment:
             env[key] = environment[key]
-    if env.get("DBUS_SESSION_BUS_ADDRESS") != "unix:path=/run/user/1000/bus":
-        raise RuntimeError("unexpected Plasma session bus")
+    # On the first boot dbus-user-session was installed after SSH created the
+    # user manager. Plasma can legitimately own a private Unix session bus until
+    # the next login. Follow the live process, and prove that bus owns this PID.
+    if not env.get("DBUS_SESSION_BUS_ADDRESS", "").startswith("unix:"):
+        raise RuntimeError("Plasma has no local Unix session bus")
+    bus_pid = run("qdbus6", "org.freedesktop.DBus", "/org/freedesktop/DBus",
+                  "org.freedesktop.DBus.GetConnectionUnixProcessID", "org.kde.plasmashell",
+                  capture=True, env=env)
+    if bus_pid != pids[0]:
+        raise RuntimeError("session bus does not own the live demo plasmashell")
     run("qdbus6", "org.kde.plasmashell", "/PlasmaShell", "org.freedesktop.DBus.Peer.Ping", capture=True, env=env)
     run("qdbus6", "org.kde.KWin", "/KWin", "org.freedesktop.DBus.Peer.Ping", capture=True, env=env)
     return env
