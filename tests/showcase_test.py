@@ -465,5 +465,157 @@ class GuestTest(unittest.TestCase):
                     guest.run("slow", timeout=0.1)
 
 
+class GuestPreparationTest(unittest.TestCase):
+    @patch.dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+    def test_guest_clone_uses_advertised_head_and_keeps_history_on_repeat(self):
+        from scripts.showcase import guest_setup
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            for args in (("init", "--initial-branch=fixture"),):
+                subprocess.run(["git", *args], cwd=source, check=True, capture_output=True)
+            for index in (1, 2):
+                (source / "content").write_text(str(index))
+                subprocess.run(["git", "add", "content"], cwd=source, check=True, capture_output=True)
+                subprocess.run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                                "commit", "-m", f"revision {index}"], cwd=source, check=True, capture_output=True)
+            bundle = root / "SOURCE.bundle"
+            expected = create_source_bundle(source, bundle)
+            with patch.object(guest_setup, "REPO", root / "clone"), \
+                    patch.object(guest_setup, "STATE", root / "state"):
+                result = guest_setup.clone_source(bundle, hashlib.sha256(bundle.read_bytes()).hexdigest())
+                self.assertEqual(result["source"], expected)
+                self.assertEqual(guest_setup.clone_source(bundle, result["source_bundle_sha256"]), result)
+                commits = subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=root / "clone",
+                                         check=True, capture_output=True, text=True).stdout.strip()
+                self.assertEqual(commits, "2")
+                (root / "clone/content").write_text("private change")
+                with self.assertRaisesRegex(RuntimeError, "repository changed"):
+                    guest_setup.clone_source(bundle, result["source_bundle_sha256"])
+
+    def test_apply_live_rejects_unknown_scope_before_deploying(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "bin").mkdir()
+            (root / "bin/apply-live").write_bytes((REPO_ROOT / "bin/apply-live").read_bytes())
+            launcher = root / "bin/apply-launcher"
+            launcher.write_text("#!/bin/sh\ntouch \"$HOME/changed\"\nexit 99\n")
+            launcher.chmod(0o755)
+            result = subprocess.run(["bash", str(root / "bin/apply-live"), "--unknown"],
+                                    env=dict(os.environ, HOME=str(root)), capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((root / "changed").exists(), "invalid scope began deploying launcher")
+
+    def test_guest_entrypoints_refuse_operator_before_any_administrative_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sudo = root / "sudo"
+            sudo.write_text("#!/bin/sh\ntouch \"$ADMIN_CALLED\"\nexit 99\n")
+            sudo.chmod(0o755)
+            with patch.dict(os.environ, PATH=f"{root}:{os.environ['PATH']}",
+                            ADMIN_CALLED=str(root / "admin-called")):
+                for name, argument in (("guest-prepare.sh", "/home/demo/SOURCE.bundle"),
+                                       ("guest-session.sh", "prepare"),
+                                       ("guest-session.sh", "reset")):
+                    result = subprocess.run(["bash", str(REPO_ROOT / "scripts/showcase" / name), argument],
+                                            capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("showcase guest guard", result.stderr)
+                    self.assertFalse((root / "admin-called").exists())
+
+    def test_marker_alone_cannot_authorize_non_qemu_or_wrong_hostname(self):
+        from scripts.showcase import guest_setup
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "marker"
+            marker.write_bytes(b"arasaka-showcase-v1\n")
+            with patch.object(guest_setup, "MARKER", marker), \
+                    patch("scripts.showcase.guest_setup.socket.gethostname", return_value="arasaka-showcase"), \
+                    patch("scripts.showcase.guest_setup.subprocess.check_output", return_value="none\n"):
+                with self.assertRaisesRegex(RuntimeError, "showcase guest guard.*QEMU/KVM"):
+                    guest_setup.require_guest()
+            with patch.object(guest_setup, "MARKER", marker), \
+                    patch("scripts.showcase.guest_setup.socket.gethostname", return_value="operator-desktop"), \
+                    patch("scripts.showcase.guest_setup.subprocess.check_output", return_value="kvm\n"):
+                with self.assertRaisesRegex(RuntimeError, "showcase guest guard.*hostname"):
+                    guest_setup.require_guest()
+
+    def test_source_identity_rejects_changed_bundle_before_reprovisioning(self):
+        from scripts.showcase import guest_setup
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = root / "SOURCE.bundle"
+            state = root / "source.json"
+            bundle.write_bytes(b"old committed bundle")
+            state.write_text(json.dumps({"source_bundle_sha256": hashlib.sha256(bundle.read_bytes()).hexdigest()}))
+            guest_setup.check_bundle_identity(bundle, state)
+            bundle.write_bytes(b"new committed bundle")
+            with self.assertRaisesRegex(RuntimeError, "new disposable guest"):
+                guest_setup.check_bundle_identity(bundle, state)
+
+    def test_plm_dependencies_preserve_version_constraints_and_continuations(self):
+        from scripts.showcase import guest_setup
+        text = "Source: plm\nBuild-Depends: cmake (>= 3.22),\n qt6-base-dev (>= 6.10),\n libplasma-dev (>= 6.7)\nStandards-Version: 4.7.2\n\nPackage: plm\nDepends: other\n"
+        self.assertEqual(guest_setup.build_dependencies(text),
+                         "cmake (>= 3.22), qt6-base-dev (>= 6.10), libplasma-dev (>= 6.7)")
+        with self.assertRaisesRegex(ValueError, "Build-Depends"):
+            guest_setup.build_dependencies("Source: missing\n")
+
+
+class PreparedGuestTest(unittest.TestCase):
+    def readiness(self):
+        return {"ready": True, "source": "a" * 40, "source_bundle_sha256": "b" * 64,
+                "session_type": "wayland", "plasma_ready": True,
+                "wallpaper": {"plugin": "online.knowmad.shaderwallpaper", "native_loaded": True},
+                "window_policy": {"version": "policy", "nativeRevision": "native", "loaded": True},
+                "managed_fingerprint": "c" * 64,
+                "plm": {"selected": True, "autologin_disabled": True, "pam_verified": True,
+                        "assets_verified": True}}
+
+    def test_repeat_preparation_rejects_drift_and_false_readiness(self):
+        from scripts.showcase import prepared
+        first = self.readiness()
+        prepared.verify_convergence(first, dict(first), "a" * 40, "b" * 64)
+        for field, value in (("managed_fingerprint", "d" * 64), ("source", "e" * 40),
+                             ("ready", False), ("session_type", "x11")):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                prepared.verify_convergence(first, dict(first, **{field: value}), "a" * 40, "b" * 64)
+        broken = self.readiness()
+        broken["window_policy"]["loaded"] = False
+        with self.assertRaises(ValueError):
+            prepared.verify_convergence(broken, broken, "a" * 40, "b" * 64)
+
+    def test_default_greeter_or_same_boot_cannot_be_sealed(self):
+        from scripts.showcase import prepared
+        greeter = {"ready": True, "boot_id": "new-boot", "service": "plasmalogin.service",
+                   "active": True, "autologin_disabled": True, "pam_verified": True,
+                   "assets_verified": True, "greeter_executable": "/usr/lib/x86_64-linux-gnu/libexec/plasma-login-greeter",
+                   "wallpaper_executable": "/usr/bin/plasma-login-wallpaper", "native_loaded": True,
+                   "demo_graphical_session": False}
+        prepared.verify_greeter(greeter, "old-boot")
+        for field, value in (("service", "sddm.service"), ("boot_id", "old-boot"),
+                             ("native_loaded", False), ("autologin_disabled", False),
+                             ("demo_graphical_session", True)):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                prepared.verify_greeter(dict(greeter, **{field: value}), "old-boot")
+
+    def test_sealed_disk_and_source_are_verified_when_reopened(self):
+        from scripts.showcase import prepared
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            for name, content in (("guest.qcow2", b"owned disk"), ("id_ed25519", b"private fixture key"),
+                                  ("SOURCE.bundle", b"source"), ("greeter.png", b"captured pixels"),
+                                  ("environment.json", b"{}"), ("base.qcow2", b"pinned base")):
+                (run / name).write_bytes(content)
+            prepared.seal(run, "a" * 40, run / "base.qcow2", {"accepted": True})
+            record = prepared.load(run, "a" * 40)
+            self.assertEqual(record["source"], "a" * 40)
+            with self.assertRaisesRegex(ValueError, "source"):
+                prepared.load(run, "b" * 40)
+            (run / "guest.qcow2").write_bytes(b"changed disk")
+            with self.assertRaisesRegex(ValueError, "guest.qcow2"):
+                prepared.load(run, "a" * 40)
+
+
 if __name__ == "__main__":
     unittest.main()

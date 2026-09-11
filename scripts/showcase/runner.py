@@ -1,6 +1,7 @@
 """Owned, disposable VM boot controller. Recording is added by later tasks."""
 
 import argparse
+import base64
 from contextlib import contextmanager, ExitStack
 import fcntl
 import hashlib
@@ -10,6 +11,7 @@ from pathlib import Path
 import secrets
 import shutil
 import signal
+import shlex
 import socket
 import subprocess
 import tempfile
@@ -18,6 +20,7 @@ import traceback
 from urllib.request import urlopen
 
 from .machine import Guest, QMP
+from . import prepared
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_MARKER = "arasaka-showcase-v1\n"
@@ -153,8 +156,99 @@ def wait_for(check, processes, timeout, description):
         time.sleep(0.5)
 
 
+def collect_guest_evidence(guest, run):
+    """Keep exact diagnostics even if a package/build/renderer stops preparation."""
+    code = """
+import base64, io, pathlib, tarfile
+paths = list(pathlib.Path('/home/demo').glob('showcase-prepare-*.log'))
+state = pathlib.Path('/home/demo/.local/state/arasaka-showcase')
+if state.exists():
+    paths += [p for p in state.rglob('*') if p.is_file()]
+build = pathlib.Path('/home/demo/arasaka-kde/build')
+if build.exists():
+    paths += [p for p in build.rglob('*') if p.is_file() and
+              (p.suffix in ('.log', '.info', '.contents') or p.name in ('inventory.json', 'CMakeCache.txt'))]
+output = io.BytesIO()
+with tarfile.open(fileobj=output, mode='w:gz') as archive:
+    for p in paths:
+        archive.add(p, arcname=str(p.relative_to('/home/demo')), recursive=False)
+print(base64.b64encode(output.getvalue()).decode())
+"""
+    result = guest.run("python3 -c " + shlex.quote(code), timeout=180)
+    (run / "guest-evidence.tar.gz").write_bytes(base64.b64decode(result.stdout, validate=False))
+    for name, command in {
+        "guest-journal.log": "sudo journalctl -b --no-pager",
+        "guest-packages.tsv": "dpkg-query -W -f='${binary:Package}\\t${Version}\\n'",
+        "guest-sessions.json": "loginctl list-sessions --json=short",
+    }.items():
+        result = guest.run(command, timeout=120)
+        (run / name).write_text(result.stdout + result.stderr)
+
+
+def deploy_guest(guest, qmp, run, config, processes):
+    bootstrap = "/home/demo/showcase-bootstrap"
+    guest.run(f"mkdir -p {bootstrap}")
+    for name in ("guest-prepare.sh", "guest-session.sh", "guest_setup.py"):
+        with (REPO_ROOT / "scripts/showcase" / name).open("rb") as stream:
+            guest.run(f"cat > {bootstrap}/{name}", stdin=stream)
+    with (run / "environment.json").open("rb") as stream:
+        guest.run(f"cat > {bootstrap}/environment.json", stdin=stream)
+    guest.run(f"chmod 755 {bootstrap}/guest-prepare.sh {bootstrap}/guest-session.sh")
+    source = (run / "source-sha").read_text().strip()
+    bundle_hash = prepared.digest(run / "SOURCE.bundle")
+    results = []
+    try:
+        for iteration in (1, 2):
+            print(f"Provisioning real KDE/PLM, pass {iteration} (guest logs retained)...", flush=True)
+            guest.run(f"{bootstrap}/guest-prepare.sh /home/demo/SOURCE.bundle "
+                      f"> /home/demo/showcase-prepare-{iteration}.log 2>&1", timeout=14400)
+            result = guest.run("/home/demo/arasaka-kde/scripts/showcase/guest-session.sh status", timeout=180)
+            status = json.loads(result.stdout)
+            results.append(status)
+            (run / f"preparation-{iteration}.json").write_text(json.dumps(status, indent=2) + "\n")
+            settings = guest.run("cat /home/demo/.local/state/arasaka-showcase/managed-settings.json")
+            (run / f"managed-settings-{iteration}.json").write_text(settings.stdout)
+        prepared.verify_convergence(*results, source, bundle_hash)
+        qmp.execute("screendump", {"filename": str(run / "prepared-desktop.png"), "format": "png"})
+        print("Preparation converged; rebooting the fixture into real PLM...", flush=True)
+        guest.run("sudo -n systemctl reboot --no-block")
+        greeter = None
+
+        def greeter_ready():
+            nonlocal greeter
+            try:
+                result = guest.run("python3 /home/demo/arasaka-kde/scripts/showcase/guest_setup.py greeter-status",
+                                   timeout=60)
+                greeter = json.loads(result.stdout)
+                prepared.verify_greeter(greeter, results[-1]["boot_id"])
+                return True
+            except (ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                (run / "greeter-wait.log").write_text(str(error) + "\n" + json.dumps(greeter))
+                return False
+
+        wait_for(greeter_ready, processes, config["vm"]["boot_timeout"], "post-reboot managed PLM greeter")
+        # Give the real QML scene a chance to render after its native plugin maps.
+        time.sleep(8)
+        qmp.execute("screendump", {"filename": str(run / "greeter.png"), "format": "png"})
+        (run / "greeter-status.json").write_text(json.dumps(greeter, indent=2) + "\n")
+        return {"preparation": ["preparation-1.json", "preparation-2.json"],
+                "managed_fingerprint": results[-1]["managed_fingerprint"],
+                "greeter": "greeter-status.json", "reboot_verified": True}
+    except BaseException:
+        try:
+            qmp.execute("screendump", {"filename": str(run / "failure-screen.png"), "format": "png"})
+        except Exception as error:
+            (run / "failure-screenshot.log").write_text(str(error))
+        raise
+    finally:
+        try:
+            collect_guest_evidence(guest, run)
+        except Exception as error:
+            (run / "evidence-collection-error.log").write_text(str(error))
+
+
 def prepare(workspace, run, config):
-    """Cold boot, verify the fixture over SSH, transfer HEAD, and retain evidence."""
+    """Cold boot, deploy twice, reboot to real PLM, then seal the stopped disk."""
     image = config["image"]
     print("Verifying the pinned Debian generic image...", flush=True)
     base = verified_download(image["url"], workspace / "cache" / "debian.qcow2",
@@ -243,7 +337,12 @@ def prepare(workspace, run, config):
             "ssh_port": port, "fixture_marker": marker.strip(),
         }, indent=2) + "\n")
         print(os_release, end="", flush=True)
-    print(f"Boot verified; VM and Xvfb stopped. Evidence: {run}", flush=True)
+        acceptance = deploy_guest(guest, qmp, run, config, [qemu, xvfb])
+        guest.run("sudo -n systemctl poweroff --no-block")
+        if qemu.wait(timeout=120) != 0:
+            raise RuntimeError("fixture did not power off cleanly; refusing to seal")
+    prepared.seal(run, (run / "source-sha").read_text().strip(), base, acceptance)
+    print(f"Prepared guest sealed; VM and Xvfb stopped. Evidence: {run}", flush=True)
 
 
 def stop_container(name, log_path):
@@ -302,7 +401,7 @@ def run_container(workspace, config):
         # The Docker client is not the VM's parent. Reap the container explicitly
         # if the caller was interrupted; --init forwards signals/reaps orphans.
         stop_container(name, run / "container-cleanup.log")
-    print(f"Boot verified; container removed. Evidence: {run}", flush=True)
+    print(f"Prepared guest sealed; container removed. Evidence: {run}", flush=True)
 
 
 def main(argv=None):
