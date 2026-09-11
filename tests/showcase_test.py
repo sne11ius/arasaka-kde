@@ -466,6 +466,26 @@ class GuestTest(unittest.TestCase):
 
 
 class GuestPreparationTest(unittest.TestCase):
+    def test_native_install_inventory_preserves_cmake_directory_links(self):
+        from scripts.showcase import guest_setup
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            icons = root / "16"
+            icons.mkdir()
+            icon = icons / "folder.svg"
+            icon.write_bytes(b"icon")
+            link = root / "16@3x"
+            link.symlink_to("16", target_is_directory=True)
+            inventory = guest_setup.install_inventory([str(icons), str(icon), str(link)], root)
+            self.assertEqual(inventory[str(link)], {"symlink": "16"})
+            self.assertEqual(inventory[str(icons)], {"directory": True})
+            icon.write_bytes(b"changed icon")
+            self.assertNotEqual(guest_setup.install_inventory(list(inventory), root), inventory)
+            link.unlink()
+            link.symlink_to("/etc")
+            with self.assertRaisesRegex(ValueError, "prefix"):
+                guest_setup.install_inventory([str(link)], root)
+
     @patch.dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
     def test_guest_clone_uses_advertised_head_and_keeps_history_on_repeat(self):
         from scripts.showcase import guest_setup

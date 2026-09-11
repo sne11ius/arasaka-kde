@@ -191,14 +191,30 @@ def install_fonts():
         raise RuntimeError("pinned Rajdhani font was not selected")
 
 
+def install_inventory(names, prefix):
+    result = {}
+    for name in names:
+        path = Path(name)
+        if not path.is_relative_to(prefix) or not path.resolve().is_relative_to(prefix):
+            raise ValueError(f"native install outside fixture prefix: {path}")
+        if path.is_symlink():
+            result[name] = {"symlink": os.readlink(path)}
+        elif path.is_file():
+            result[name] = {"sha256": sha256(path)}
+        elif path.is_dir():
+            result[name] = {"directory": True}
+        else:
+            raise ValueError(f"native install missing: {path}")
+    return result
+
+
 def build_visuals(identity):
     for component in ("klassy", "better-blur-dx"):
         stamp = STATE / (component + ".json")
         if stamp.exists():
             previous = json.loads(stamp.read_text())
-            if previous["source"] != identity["source"] or any(
-                    not Path(name).is_file() or sha256(name) != checksum
-                    for name, checksum in previous["installed"].items()):
+            if (previous["source"] != identity["source"] or
+                    install_inventory(previous["installed"], HOME / ".local") != previous["installed"]):
                 raise RuntimeError(f"{component} installed identity changed; use a new guest")
             continue
         archive = Path(run(REPO / "bin/fetch-components", component, capture=True))
@@ -223,7 +239,7 @@ def build_visuals(identity):
             raise ValueError(f"unexpected {component} install prefix")
         save(stamp, {"source": identity["source"], "archive_sha256": sha256(archive),
                      "source_notices": str(roots[0]),
-                     "installed": {p: sha256(p) for p in installed}})
+                     "installed": install_inventory(installed, HOME / ".local")})
 
 
 def fixture_environment():
