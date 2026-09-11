@@ -153,7 +153,7 @@ def install_dependencies():
         kwin-dev libkdecorations3-dev libkf6configwidgets-dev libkf6colorscheme-dev
         libkf6guiaddons-dev libkf6iconthemes-dev libkf6widgetsaddons-dev
         libkf6crash-dev libkf6globalaccel-dev libkf6notifications-dev libkf6service-dev
-        libkf6frameworkintegration-dev libepoxy-dev libdrm-dev libgbm-dev libinput-dev
+        libkf6style-dev libepoxy-dev libdrm-dev libgbm-dev libinput-dev
         libwayland-dev libxkbcommon-dev libxcb-composite0-dev libxcb-randr0-dev
         libxcb-shm0-dev libxcb-res0-dev libxcb-sync-dev libxcb-damage0-dev
         libxcb-xfixes0-dev libxcb-render0-dev libxcb-shape0-dev libxcb-keysyms1-dev

@@ -158,6 +158,10 @@ def wait_for(check, processes, timeout, description):
 
 def collect_guest_evidence(guest, run):
     """Keep exact diagnostics even if a package/build/renderer stops preparation."""
+    for iteration in (1, 2):
+        path = f"/home/demo/showcase-prepare-{iteration}.log"
+        result = guest.run(f"if test -f {path}; then cat {path}; fi", timeout=120)
+        (run / f"showcase-prepare-{iteration}.log").write_text(result.stdout + result.stderr)
     code = """
 import base64, io, pathlib, tarfile
 paths = list(pathlib.Path('/home/demo').glob('showcase-prepare-*.log'))
