@@ -4,7 +4,7 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         qemu-system-x86 qemu-system-gui qemu-utils ffmpeg xvfb xauth \
         python3 python3-pil openssh-client genisoimage xdotool x11-utils \
-        curl ca-certificates openssl git \
+        curl ca-certificates openssl git openbox \
     && rm -rf /var/lib/apt/lists/*
 
 ARG SHOWCASE_UID=1000

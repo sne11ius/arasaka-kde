@@ -15,6 +15,7 @@ def verify_convergence(first, second, source, bundle_hash):
         if (result.get("ready") is not True or result.get("source") != source
                 or result.get("source_bundle_sha256") != bundle_hash
                 or result.get("session_type") != "wayland" or result.get("plasma_ready") is not True
+                or result.get("panels") != 0
                 or result.get("wallpaper", {}).get("plugin") != "online.knowmad.shaderwallpaper"
                 or result.get("wallpaper", {}).get("native_loaded") is not True
                 or result.get("window_policy", {}).get("loaded") is not True
@@ -35,6 +36,15 @@ def verify_greeter(result, setup_boot):
             or not all(result.get(key) is True for key in
                        ("active", "autologin_disabled", "pam_verified", "assets_verified", "native_loaded"))):
         raise ValueError("post-reboot real PLM greeter is not ready")
+
+
+def verify_frame(path, display):
+    from PIL import Image
+    with Image.open(path) as image:
+        if image.size != (display["width"], display["height"]):
+            raise ValueError(f"incorrect showcase framing: {path}: {image.size}")
+        image.verify()
+    return {key: display[key] for key in ("width", "height")}
 
 
 def seal(run, source, base, evidence):

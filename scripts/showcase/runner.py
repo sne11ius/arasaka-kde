@@ -190,7 +190,21 @@ print(base64.b64encode(output.getvalue()).decode())
         (run / name).write_text(result.stdout + result.stderr)
 
 
-def deploy_guest(guest, qmp, run, config, processes):
+def capture_prepared_frame(qmp, run, config, env, label):
+    """Retain both guest pixels and the actual recorder viewport; reject cropping."""
+    guest_frame = run / f"{label}.png"
+    qmp.execute("screendump", {"filename": str(guest_frame), "format": "png"})
+    prepared.verify_frame(guest_frame, config["display"])
+    capture = run / f"{label}-capture.png"
+    width, height = config["display"]["width"], config["display"]["height"]
+    with (run / f"{label}-capture.log").open("w") as log:
+        subprocess.run(["ffmpeg", "-y", "-f", "x11grab", "-video_size", f"{width}x{height}",
+                        "-i", env["DISPLAY"], "-frames:v", "1", str(capture)], env=env,
+                       check=True, stdout=log, stderr=log, timeout=30)
+    prepared.verify_frame(capture, config["display"])
+
+
+def deploy_guest(guest, qmp, run, config, processes, env):
     bootstrap = "/home/demo/showcase-bootstrap"
     guest.run(f"mkdir -p {bootstrap}")
     for name in ("guest-prepare.sh", "guest-session.sh", "guest_setup.py"):
@@ -214,7 +228,7 @@ def deploy_guest(guest, qmp, run, config, processes):
             settings = guest.run("cat /home/demo/.local/state/arasaka-showcase/managed-settings.json")
             (run / f"managed-settings-{iteration}.json").write_text(settings.stdout)
         prepared.verify_convergence(*results, source, bundle_hash)
-        qmp.execute("screendump", {"filename": str(run / "prepared-desktop.png"), "format": "png"})
+        capture_prepared_frame(qmp, run, config, env, "prepared-desktop")
         print("Preparation converged; rebooting the fixture into real PLM...", flush=True)
         guest.run("sudo -n systemctl reboot --no-block")
         greeter = None
@@ -234,7 +248,7 @@ def deploy_guest(guest, qmp, run, config, processes):
         wait_for(greeter_ready, processes, config["vm"]["boot_timeout"], "post-reboot managed PLM greeter")
         # Give the real QML scene a chance to render after its native plugin maps.
         time.sleep(8)
-        qmp.execute("screendump", {"filename": str(run / "greeter.png"), "format": "png"})
+        capture_prepared_frame(qmp, run, config, env, "greeter")
         (run / "greeter-status.json").write_text(json.dumps(greeter, indent=2) + "\n")
         return {"preparation": ["preparation-1.json", "preparation-2.json"],
                 "managed_fingerprint": results[-1]["managed_fingerprint"],
@@ -278,6 +292,14 @@ def prepare(workspace, run, config):
              "-auth", str(authority)], stdout=xvfb_log, stderr=xvfb_log))
         wait_for(lambda: subprocess.run(["xdpyinfo"], env=env, stdout=log, stderr=log,
                                         timeout=5).returncode == 0, [xvfb], 30, "private Xvfb")
+        # GTK requests fullscreen through EWMH. Bare Xvfb ignores that request,
+        # leaving a 640x505 window and teaching virtio/KWin that wrong size.
+        wm_log = stack.enter_context((run / "openbox.log").open("w"))
+        wm = stack.enter_context(managed_process(["openbox", "--sm-disable"], env=env,
+                                                 stdout=wm_log, stderr=wm_log))
+        wait_for(lambda: "window id #" in subprocess.run(
+            ["xprop", "-root", "_NET_SUPPORTING_WM_CHECK"], env=env, capture_output=True,
+            text=True, check=True, timeout=5).stdout, [xvfb, wm], 30, "private EWMH window manager")
         # QEMU binds immediately in this private container network namespace. A
         # competing bind fails startup and is retained in qemu.log, never redirected.
         with socket.socket() as reservation:
@@ -291,7 +313,7 @@ def prepare(workspace, run, config):
             "-drive", f"file={iso},media=cdrom,readonly=on", "-boot", "order=c",
             "-vga", "none", "-device", f"virtio-vga,xres={width},yres={height}",
             "-device", "qemu-xhci", "-device", "usb-tablet",
-            "-display", "gtk,gl=off,show-cursor=on", "-full-screen",
+            "-display", "gtk,gl=off,show-cursor=on,show-menubar=off", "-full-screen",
             "-netdev", f"user,id=net0,hostfwd=tcp:127.0.0.1:{port}-:22",
             "-device", "virtio-net-pci,netdev=net0",
             "-qmp", f"unix:{qmp_path},server=on,wait=off",
@@ -342,7 +364,7 @@ def prepare(workspace, run, config):
             "ssh_port": port, "fixture_marker": marker.strip(),
         }, indent=2) + "\n")
         print(os_release, end="", flush=True)
-        acceptance = deploy_guest(guest, qmp, run, config, [qemu, xvfb])
+        acceptance = deploy_guest(guest, qmp, run, config, [qemu, xvfb, wm], env)
         guest.run("sudo -n systemctl poweroff --no-block")
         if qemu.wait(timeout=120) != 0:
             raise RuntimeError("fixture did not power off cleanly; refusing to seal")

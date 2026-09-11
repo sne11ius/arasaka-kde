@@ -466,6 +466,62 @@ class GuestTest(unittest.TestCase):
 
 
 class GuestPreparationTest(unittest.TestCase):
+    def test_bootstrap_completes_missing_sddm_selector_and_refuses_conflicting_selection(self):
+        from scripts.showcase import guest_setup
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selector = root / 'etc/X11/default-display-manager'
+
+            def system_file(path, text, mode='0644'):
+                target = root / str(path).lstrip('/') if path != selector else selector
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text)
+
+            with patch.object(guest_setup, 'HOME', root), patch.object(guest_setup, 'STATE', root / 'state'), \
+                    patch.object(guest_setup, 'SDDM_SELECTOR', selector, create=True), \
+                    patch.object(guest_setup, 'system_file', side_effect=system_file), \
+                    patch.object(guest_setup, 'sudo'), patch.object(guest_setup, 'session_environment', return_value={}):
+                guest_setup.bootstrap_session()
+                self.assertTrue(selector.exists(), 'enabled SDDM is missing its initial selector')
+                self.assertEqual(selector.read_text(), '/usr/bin/sddm\n')
+                guest_setup.bootstrap_session()
+                self.assertEqual(selector.read_text(), '/usr/bin/sddm\n')
+                selector.write_text('/usr/bin/other-dm\n')
+                with self.assertRaisesRegex(RuntimeError, 'selector'):
+                    guest_setup.bootstrap_session()
+                self.assertEqual(selector.read_text(), '/usr/bin/other-dm\n')
+                (root / 'state').mkdir()
+                (root / 'state/plm-selected.json').write_text('{}')
+                selector.write_text('/usr/bin/plasmalogin\n')
+                guest_setup.bootstrap_session()
+                self.assertEqual(selector.read_text(), '/usr/bin/plasmalogin\n')
+
+    def test_fixture_panel_cleanup_removes_only_stock_panel_and_converges(self):
+        from scripts.showcase import guest_setup
+        script = getattr(guest_setup, 'FIXTURE_PANELS_SCRIPT', '')
+        harness = r'''
+const vm = require('vm');
+const widgets = ['kickoff','pager','icontasks','marginsseparator','systemtray','digitalclock','showdesktop'];
+function panel(types) { return {type:'org.kde.panel', widgets:()=>types.map(t=>({type:t})),
+  removed:false, remove() { this.removed=true; }}; }
+const stock = () => panel(widgets.map(t=>'org.kde.plasma.'+t));
+function execute(model) {
+  let error=null;
+  try { vm.runInNewContext(process.argv[1], {panels:()=>model.filter(p=>!p.removed), print:()=>{}}); }
+  catch(e) { error=e.message; }
+  return {remaining:model.filter(p=>!p.removed).length, error};
+}
+let model=[stock()]; const first=execute(model), second=execute(model);
+model=[stock(),panel(['example.user.widget'])]; const foreign=execute(model);
+console.log(JSON.stringify({first,second,foreign}));
+'''
+        result = subprocess.run(['node', '-e', harness, script], capture_output=True, text=True, check=True)
+        values = json.loads(result.stdout)
+        self.assertEqual(values['first'], {'remaining': 0, 'error': None})
+        self.assertEqual(values['second'], {'remaining': 0, 'error': None})
+        self.assertEqual(values['foreign']['remaining'], 2, 'validate every panel before removing any')
+        self.assertIsNotNone(values['foreign']['error'])
+
     def test_fixture_startup_exports_real_native_plugin_path_and_software_animations(self):
         from scripts.showcase import guest_setup
         with tempfile.TemporaryDirectory() as directory:
@@ -599,6 +655,7 @@ class PreparedGuestTest(unittest.TestCase):
     def readiness(self):
         return {"ready": True, "source": "a" * 40, "source_bundle_sha256": "b" * 64,
                 "session_type": "wayland", "plasma_ready": True,
+                "panels": 0,
                 "wallpaper": {"plugin": "online.knowmad.shaderwallpaper", "native_loaded": True},
                 "window_policy": {"version": "policy", "nativeRevision": "native", "loaded": True},
                 "managed_fingerprint": "c" * 64,
@@ -610,13 +667,25 @@ class PreparedGuestTest(unittest.TestCase):
         first = self.readiness()
         prepared.verify_convergence(first, dict(first), "a" * 40, "b" * 64)
         for field, value in (("managed_fingerprint", "d" * 64), ("source", "e" * 40),
-                             ("ready", False), ("session_type", "x11")):
+                             ("ready", False), ("session_type", "x11"), ("panels", 1), ("panels", None)):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 prepared.verify_convergence(first, dict(first, **{field: value}), "a" * 40, "b" * 64)
         broken = self.readiness()
         broken["window_policy"]["loaded"] = False
         with self.assertRaises(ValueError):
             prepared.verify_convergence(broken, broken, "a" * 40, "b" * 64)
+
+    def test_capture_gate_rejects_small_guest_even_when_xvfb_is_correct(self):
+        from scripts.showcase import prepared
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'frame.png'
+            Image.new('RGB', (640, 505), '#a62b31').save(path)
+            with self.assertRaisesRegex(ValueError, 'framing'):
+                prepared.verify_frame(path, {'width': 1280, 'height': 720})
+            Image.new('RGB', (1280, 720), '#a62b31').save(path)
+            self.assertEqual(prepared.verify_frame(path, {'width': 1280, 'height': 720}),
+                             {'width': 1280, 'height': 720})
 
     def test_default_greeter_or_same_boot_cannot_be_sealed(self):
         from scripts.showcase import prepared

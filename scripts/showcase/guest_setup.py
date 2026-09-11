@@ -29,6 +29,23 @@ STATE = HOME / ".local/state/arasaka-showcase"
 PLUGIN = "online.knowmad.shaderwallpaper"
 NATIVE = f"plasma/wallpapers/{PLUGIN}/contents/ui/shaderwallpaper/libshaderwallpaperplugin.so"
 PLUGIN_PATH = HOME / ".local/lib/x86_64-linux-gnu/plugins"
+SDDM_SELECTOR = Path("/etc/X11/default-display-manager")
+
+# This cleanup belongs only to the disposable fixture. Production's launcher
+# deliberately preserves unmanaged panels. Validate the complete stock signature
+# before removing anything, so an unexpected guest layout is diagnostic evidence.
+FIXTURE_PANELS_SCRIPT = """
+var stock = ["kickoff", "pager", "icontasks", "marginsseparator", "systemtray",
+             "digitalclock", "showdesktop"].map(function(name) { return "org.kde.plasma." + name; });
+var initial = panels();
+initial.forEach(function(panel) {
+    var widgets = panel.widgets().map(function(widget) { return widget.type; });
+    if (panel.type !== "org.kde.panel" || JSON.stringify(widgets) !== JSON.stringify(stock))
+        throw new Error("unexpected non-stock fixture panel; refusing to remove it");
+});
+initial.forEach(function(panel) { panel.remove(); });
+print(JSON.stringify({removed: initial.length}));
+"""
 
 
 def require_guest():
@@ -301,6 +318,15 @@ def session_environment():
 def bootstrap_session():
     fixture_environment()
     if not (STATE / "plm-selected.json").exists():
+        # Debian's noninteractive SDDM postinst can leave this absent even though
+        # debconf and the service alias select SDDM. Complete the fixture baseline
+        # before invoking the production migration's strict initial-manager guard.
+        if SDDM_SELECTOR.is_symlink():
+            raise RuntimeError("unexpected symlink SDDM selector")
+        if not SDDM_SELECTOR.exists():
+            system_file(SDDM_SELECTOR, "/usr/bin/sddm\n")
+        if SDDM_SELECTOR.read_text() != "/usr/bin/sddm\n":
+            raise RuntimeError("unexpected initial SDDM selector")
         system_file("/etc/sddm.conf.d/90-arasaka-showcase-bootstrap.conf",
                     "[Autologin]\nUser=demo\nSession=plasma.desktop\nRelogin=false\n")
         sudo("systemctl", "set-default", "graphical.target")
@@ -388,6 +414,9 @@ def managed_settings(env):
             values[str(path.relative_to(HOME))] = sha256(path)
     # apply-plm performs real live wallpaper readback against the shared values.
     values["desktops"] = project_plm().desktop_state(HOME)
+    values["panels"] = json.loads(run("qdbus6", "org.kde.plasmashell", "/PlasmaShell",
+                                     "org.kde.PlasmaShell.evaluateScript", "print(JSON.stringify(panels().length));",
+                                     capture=True, env=env))
     return values
 
 
@@ -409,7 +438,8 @@ def status(env):
     loaded = mapped_plugin(pid, HOME / ".local/share" / NATIVE)
     values = managed_settings(env)
     plm = plm_state()
-    result = dict(identity, ready=loaded and all(plm.values()), session_type="wayland", plasma_ready=True,
+    result = dict(identity, ready=loaded and all(plm.values()) and values["panels"] == 0,
+                   panels=values["panels"], session_type="wayland", plasma_ready=True,
                   wallpaper={"plugin": PLUGIN, "native_loaded": loaded, "desktops": values["desktops"]},
                   window_policy=dict(policy, loaded=True), effects=list(effects), plm=plm,
                   boot_id=Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
@@ -419,7 +449,10 @@ def status(env):
 
 
 def prepare_session(env):
+    require_guest()
     os.environ.update(env)
+    run("qdbus6", "org.kde.plasmashell", "/PlasmaShell", "org.kde.PlasmaShell.evaluateScript",
+        FIXTURE_PANELS_SCRIPT, env=env)
     run(REPO / "bin/apply-live", "--desktop-only", env=env)
     fixture_environment()  # apply-live's legacy environment file is user-specific.
     terminal_profile(env)
