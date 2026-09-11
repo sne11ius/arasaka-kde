@@ -466,6 +466,37 @@ class GuestTest(unittest.TestCase):
 
 
 class GuestPreparationTest(unittest.TestCase):
+    def test_dependency_install_supplies_all_pinned_plm_pam_providers_without_recommends(self):
+        from scripts.showcase import guest_setup
+        # Independently inspected in the hash-pinned Debian PLM PAM files and
+        # their common-* includes. Omitting either optional keyring module made
+        # the real migration's strict runtime verification reject this fixture.
+        providers = {"libpam-modules", "libpam-runtime", "libpam-systemd",
+                     "libpam-gnome-keyring", "libpam-kwallet5"}
+        commands = []
+
+        def execute(command, **kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0, stdout="fixture-package\t1\n")
+
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(guest_setup, "REPO", REPO_ROOT), \
+                patch.object(guest_setup, "STATE", Path(directory)), \
+                patch.object(guest_setup, "require_guest"), \
+                patch.object(guest_setup.subprocess, "run", side_effect=execute), \
+                contextlib.redirect_stdout(io.StringIO()):
+            guest_setup.install_dependencies()
+        # Keep the real dependency selection and sudo/argv construction; replace
+        # only external commands so this host test cannot administer the host.
+        installs = [command[command.index("apt-get") + 1:] for command in commands
+                    if "apt-get" in command and "install" in command]
+        self.assertEqual(len(installs), 2)
+        for mode, command in zip(("--simulate", "--yes"), installs):
+            with self.subTest(mode=mode):
+                self.assertEqual(command[:3], [mode, "--no-install-recommends", "install"])
+                self.assertFalse(providers - set(command[3:]),
+                                 f"missing pinned PAM providers: {sorted(providers - set(command[3:]))}")
+
     def test_bootstrap_completes_missing_sddm_selector_and_refuses_conflicting_selection(self):
         from scripts.showcase import guest_setup
         with tempfile.TemporaryDirectory() as directory:

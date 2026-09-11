@@ -158,9 +158,13 @@ def install_dependencies():
     # Let APT enforce the exact version relations in the authoritative control.
     sudo("apt-get", "--simulate", "--no-install-recommends", "satisfy", dependencies)
     sudo("apt-get", "--yes", "--no-install-recommends", "satisfy", dependencies)
+    # The hash-pinned Debian PLM PAM files mention both keyring modules, even
+    # though APT only recommends them. Supply every provider (including common-*
+    # PAM stacks) explicitly so apply-plm's strict runtime check can stay intact.
     packages = """
         build-essential ninja-build gettext patch pkgconf dpkg-dev
         plasma-desktop plasma-workspace kwin-wayland sddm xserver-xorg
+        libpam-modules libpam-runtime libpam-systemd libpam-gnome-keyring libpam-kwallet5
         konsole dolphin systemsettings plasma-nm plasma-pa powerdevil
         polkit-kde-agent-1 kscreen qdbus-qt6 libkf6config-bin kpackagetool6
         jq dbus-user-session qt6-wayland qt6-style-kvantum qt-style-kvantum-themes
