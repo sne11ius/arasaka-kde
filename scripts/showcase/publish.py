@@ -46,10 +46,13 @@ def main():
 
     tag = "showcase-" + source[:12]
     release_url = f"https://github.com/{args.repo}/releases/tag/{tag}"
+    notes = (f"Automatically recorded from {source}. The MP4 contains the real PLM and Plasma session.\n\n"
+             "Interactive Rain adapts BigWings' Heartfelt (CC BY-NC-SA 3.0). "
+             f"[Full credits and component licenses](https://github.com/{args.repo}/blob/{source}/ATTRIBUTION.md).")
     if gh("release", "view", tag, "--repo", args.repo, allow_failure=True).returncode:
         gh("release", "create", tag, "--repo", args.repo, "--target", source,
            "--prerelease", "--latest=false", "--title", f"Recorded showcase · {source[:7]}",
-           "--notes", f"Automatically recorded from {source}. The MP4 contains the real PLM and Plasma session.")
+           "--notes", notes)
     gh("release", "upload", tag, "--repo", args.repo, "--clobber",
        "showcase.mp4", "showcase-inline.mp4", "poster.png", "chapters.json", "provenance.json")
 
