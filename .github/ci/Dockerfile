@@ -11,6 +11,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && command -v kreadconfig6 kwriteconfig6 rsvg-convert node c++ cmake dbus-run-session ffmpeg ffprobe
 
+# The showcase download regressions exercise the real resumable transfer tool.
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends aria2 \
+    && rm -rf /var/lib/apt/lists/*
+
 # D-Bus requires a passwd entry for the UID used by docker run. Match the
 # checkout owner on both local machines and GitHub's UID-1001 hosted runner.
 ARG TEST_UID=1000

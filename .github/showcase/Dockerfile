@@ -7,6 +7,11 @@ RUN apt-get update \
         curl ca-certificates openssl git openbox \
     && rm -rf /var/lib/apt/lists/*
 
+# Keep large-image transfer dependencies in their own small layer.
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends aria2 \
+    && rm -rf /var/lib/apt/lists/*
+
 ARG SHOWCASE_UID=1000
 ARG SHOWCASE_GID=1000
 RUN if ! getent group "$SHOWCASE_GID" >/dev/null; then groupadd --gid "$SHOWCASE_GID" recorder; fi \

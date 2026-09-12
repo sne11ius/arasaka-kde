@@ -20,7 +20,7 @@ import traceback
 from urllib.request import urlopen
 
 from .machine import Guest, QMP
-from . import prepared
+from . import downloads, prepared
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_MARKER = "arasaka-showcase-v1\n"
@@ -270,8 +270,9 @@ def prepare(workspace, run, config):
     """Cold boot, deploy twice, reboot to real PLM, then seal the stopped disk."""
     image = config["image"]
     print("Verifying the pinned Debian generic image...", flush=True)
-    base = verified_download(image["url"], workspace / "cache" / "debian.qcow2",
-                             image["algorithm"], image["digest"])
+    base = downloads.verified_image_download(
+        image["url"], workspace / "cache" / "debian.qcow2",
+        image["algorithm"], image["digest"], log_path=run / "image-download.log")
     with ExitStack() as stack:
         log = stack.enter_context((run / "transport.log").open("w"))
         key, iso = create_seed(run, config, log)
