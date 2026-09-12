@@ -52,16 +52,26 @@ def record_prepared(workspace, run, config, previous):
         qmp = stack.enter_context(QMP(run / "qmp.sock"))
         port = json.loads((previous / "boot-evidence.json").read_text())["ssh_port"]
         guest = Guest(port, previous / "id_ed25519")
+        previous_boot = None
 
         def ready():
             try:
                 result = guest.run("python3 /home/demo/arasaka-kde/scripts/showcase/guest_setup.py greeter-status",
                                    timeout=20)
-                return json.loads(result.stdout).get("ready") is True
+                status = json.loads(result.stdout)
+                return status.get("ready") is True and status.get("boot_id") != previous_boot
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError):
                 return False
 
         wait_for(ready, processes, 240, "real PLM greeter")
+        cursor_config = "/etc/environment.d/90-arasaka-showcase-cursor.conf"
+        configured = guest.run(f"if test -f {cursor_config}; then cat {cursor_config}; fi").stdout
+        if configured != "KWIN_FORCE_SW_CURSOR=1\n":
+            guest.run("sudo install -d /etc/environment.d && "
+                      f"printf 'KWIN_FORCE_SW_CURSOR=1\\n' | sudo tee {cursor_config} >/dev/null")
+            previous_boot = guest.run("cat /proc/sys/kernel/random/boot_id").stdout.strip()
+            guest.run("sudo -n systemctl reboot --no-block")
+            wait_for(ready, processes, 240, "single-cursor greeter")
         qmp.execute("screendump", {"filename": str(run / "greeter-start.png"), "format": "png"})
         try:
             record_tour(guest, qmp, run, config, env)

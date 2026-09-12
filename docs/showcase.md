@@ -3,7 +3,8 @@
 [Docs](README.md) / Showcase
 
 The README film is made from a real disposable VM: PLM login, interactive rain,
-Plasma, the launcher, styled Konsole windows, and tiling/effects.
+Plasma, the launcher, styled Konsole windows, tiling/effects, and the Stream Deck
+Quake Konsole with its borderless dropdown, split panes and bottom tabs.
 GitHub Actions runs the same scripts available in the checkout.
 
 ## Record it
@@ -34,6 +35,15 @@ real-frame `poster.png`, `chapters.json`, and `provenance.json` with the source
 commit, environment, dimensions, duration and file hashes. Recording is silent,
 1280×720, with a 30 FPS capture target. Guest performance is that of the VM; footage
 is not sped up or frame-interpolated.
+
+The guest composes its cursor with `KWIN_FORCE_SW_CURSOR=1`; FFmpeg's extra
+host-cursor overlay is off, so only one cursor appears in the film.
+PLM is woken with a normal key before capture. Its Escape key turns the outputs
+off and is not used to stage the opening shot.
+
+The Quake appearance is imported from the requested current
+[Stream Deck scripts design](../showcase/streamdeck/README.md). Its actual
+stylesheet and native Konsole settings are included so CI can reproduce it.
 
 ## CI and publishing
 

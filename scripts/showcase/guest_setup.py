@@ -264,9 +264,12 @@ def build_visuals(identity):
 
 
 def fixture_environment():
+    # Compose one cursor into the guest image; the recorder does not add a
+    # second X11-host cursor. This also covers PLM's user manager after reboot.
+    system_file("/etc/environment.d/90-arasaka-showcase-cursor.conf", "KWIN_FORCE_SW_CURSOR=1\n")
     target = HOME / ".config/environment.d/arasaka.conf"
     target.parent.mkdir(parents=True, exist_ok=True)
-    values = f"QT_PLUGIN_PATH={PLUGIN_PATH}\nKWIN_EFFECTS_FORCE_ANIMATIONS=1\n"
+    values = f"QT_PLUGIN_PATH={PLUGIN_PATH}\nKWIN_EFFECTS_FORCE_ANIMATIONS=1\nKWIN_FORCE_SW_CURSOR=1\n"
     target.write_text(values)
     # The SSH user manager predates package installation on the first boot;
     # startplasma must also import these before KWin/plugin discovery starts.

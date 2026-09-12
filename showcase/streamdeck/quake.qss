@@ -1,0 +1,20 @@
+/* Clear the ancestors too, so the gutter reveals the desktop, not an opaque
+   widget background. Do not style menus, toolbars, or terminal displays. */
+Konsole--MainWindow,
+Konsole--TabbedViewContainer,
+Konsole--TabbedViewContainer > QStackedWidget#qt_tabwidget_stackedwidget,
+Konsole--ViewSplitter {
+    background-color: transparent;
+}
+
+/* Width comes from Konsole's native SplitDragHandleMedium setting (5px). */
+Konsole--ViewSplitter::handle {
+    background-color: rgba(7, 9, 12, 64);
+    border: none;
+    margin: 0;
+    padding: 0;
+}
+
+Konsole--ViewSplitter::handle:hover {
+    background-color: rgba(154, 162, 173, 80);
+}

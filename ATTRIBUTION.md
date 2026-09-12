@@ -167,6 +167,11 @@ installed gallery descriptions and shader headers.
 
 ## Documentation and CI tooling
 
+The recorded Quake Konsole appearance comes from
+[sne11ius/streamdeck-scripts](https://github.com/sne11ius/streamdeck-scripts), under
+EUPL-1.2. The imported stylesheet, source snapshot and native settings are recorded
+in [`showcase/streamdeck/`](showcase/streamdeck/README.md).
+
 The test container installs **Rajdhani SemiBold** from
 [Google Fonts' Rajdhani sources](https://github.com/google/fonts/tree/9d1ce2fc3c335cca32b6db00c19f55d57b0a68fe/ofl/rajdhani)
 under the **SIL Open Font License 1.1**. The font and its original `OFL.txt` are

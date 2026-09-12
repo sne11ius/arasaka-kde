@@ -123,18 +123,69 @@ def record_tour(guest, qmp, directory, config, env):
                 "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True); print(p.pid)")
         time.sleep(2)
 
+    def open_quake():
+        style = (Path(__file__).resolve().parents[2] / "showcase/streamdeck/quake.qss").read_text()
+        directory_name = "/home/demo/.local/share/konsole"
+        style_path = directory_name + "/quake.qss"
+        layout_path = "/home/demo/.local/state/showcase-quake.json"
+
+        def pane(command, number, lines):
+            return {"SessionRestoreId": number, "Columns": 85, "Lines": lines,
+                    "WorkingDirectory": "/home/demo/arasaka-kde", "Command": command}
+
+        layout = {"Orientation": "Horizontal", "Widgets": [
+            pane("btop", 1, 38),
+            {"Orientation": "Vertical", "Widgets": [
+                pane("clear; fastfetch --logo small --structure OS:DE:WM:Theme:Icons", 2, 18),
+                pane("clear; batcat --color=always --paging=never --line-range=1:12 native/rain/dropletsimulation.h", 3, 18),
+            ]},
+        ]}
+        session("from pathlib import Path; "
+                f"Path({style_path!r}).write_text({style!r}); "
+                f"Path({layout_path!r}).write_text({json.dumps(layout)!r})")
+        for group, key_name, value in (
+                ("SplitView", "SplitViewVisibility", "AlwaysHideSplitHeader"),
+                ("SplitView", "SplitDragHandleSize", "SplitDragHandleMedium"),
+                ("TabBar", "TabBarPosition", "Bottom")):
+            desktop_command(["kwriteconfig6", "--file", "konsolerc", "--group", group,
+                             "--key", key_name, value])
+        args = ["konsole", "--separate", "--profile", "Showcase", "--hide-menubar",
+                "--hide-toolbars", "--show-tabbar", "--stylesheet", style_path, "--layout", layout_path]
+        pid = int(session("from pathlib import Path; p=subprocess.Popen(" + repr(args) + ",env=env,"
+                          "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,"
+                          "start_new_session=True); Path('/tmp/konsole-quake.pid').write_text(str(p.pid)+'\\n'); print(p.pid)"))
+        bus = f"org.kde.konsole-{pid}"
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                active = desktop_command(["qdbus6", bus, "/Windows/1", "currentSession"])
+                if active.isdigit() and int(active) > 0:
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("the Quake Konsole did not create its panes")
+                time.sleep(.2)
+            except subprocess.CalledProcessError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("the Quake Konsole did not open")
+                time.sleep(.2)
+        window_action(f"const w=workspace.windowList().find(w=>w.pid==={pid}); "
+                      "const g=workspace.activeScreen.geometry; w.noBorder=true; w.keepAbove=true; "
+                      "w.keepBelow=false; w.skipTaskbar=true; w.skipPager=true; w.skipSwitcher=true; "
+                      "w.frameGeometry={x:g.x,y:g.y,width:g.width,height:Math.round(g.height*.755)}; "
+                      "workspace.activeWindow=w;")
+        return pid, bus, active
+
     windows = xdo("search", "--onlyvisible", "--name", "arasaka-showcase").splitlines()
     if not windows:
         raise RuntimeError("QEMU's recording window is unavailable")
     xdo("windowactivate", "--sync", windows[0])
     move(width * .12, height * .5, .2)
-    # PLM normally blurs the wallpaper while its password form is active.
-    # Begin with its ordinary idle view, then reveal and use the real form.
-    key("Escape")
+    # A normal key wakes PLM. Escape would switch its outputs off through DPMS.
+    key("Shift_L")
     time.sleep(2)
     master = directory / "showcase.mp4"
     command = ["ffmpeg", "-y", "-f", "x11grab", "-framerate", "30", "-video_size",
-               f"{width}x{height}", "-draw_mouse", "1", "-i", env["DISPLAY"], "-an",
+               f"{width}x{height}", "-draw_mouse", "0", "-i", env["DISPLAY"], "-an",
                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "2",
                "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(master)]
     with (directory / "recording.log").open("w") as log:
@@ -212,6 +263,29 @@ def record_tour(guest, qmp, directory, config, env):
                 screenshot("launcher-menu")
                 key("Escape")
                 time.sleep(1)
+            with chapter("quake-konsole"):
+                window_action("workspace.windowList().filter(w=>w.resourceClass==='org.kde.konsole').forEach(w=>w.minimized=true);")
+                time.sleep(1)
+                quake_pid, quake_bus, layout_session = open_quake()
+                time.sleep(4)
+                shell_session = desktop_command(["qdbus6", quake_bus, "/Windows/1", "newSession",
+                                                  "Arasaka Showcase", "/home/demo/arasaka-kde"])
+                time.sleep(1)
+                type_text("ls --color=auto")
+                key("Return")
+                time.sleep(2)
+                desktop_command(["qdbus6", quake_bus, "/Windows/1", "setCurrentSession", layout_session])
+                move(width * .5, height * .27, .5)
+                time.sleep(.6)
+                xdo("mousedown", "1")
+                move(width * .56, height * .27, .8)
+                xdo("mouseup", "1")
+                time.sleep(2)
+                screenshot("quake-splits")
+                window_action(f"workspace.windowList().find(w=>w.pid==={quake_pid}).minimized=true;")
+                time.sleep(2)
+                window_action(f"const w=workspace.windowList().find(w=>w.pid==={quake_pid}); w.minimized=false; workspace.activeWindow=w;")
+                time.sleep(3)
             with chapter("final"):
                 move(width - 15, height - 15, .8)
                 time.sleep(10)
