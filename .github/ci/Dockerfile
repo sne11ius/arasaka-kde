@@ -3,13 +3,13 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 # Test dependencies, not full-desktop or PLM deployment prerequisites.
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
-        build-essential ca-certificates cmake curl dbus-bin dbus-daemon \
+        build-essential ca-certificates cmake curl dbus-bin dbus-daemon ffmpeg \
         gcovr git jq libgl1-mesa-dri libglx-mesa0 libkf6config-bin \
         libqt6opengl6-dev librsvg2-bin ninja-build nodejs patch \
         python3 python3-coverage python3-pil qt6-base-dev qt6-declarative-dev \
         xauth xvfb \
     && rm -rf /var/lib/apt/lists/* \
-    && command -v kreadconfig6 kwriteconfig6 rsvg-convert node c++ cmake dbus-run-session
+    && command -v kreadconfig6 kwriteconfig6 rsvg-convert node c++ cmake dbus-run-session ffmpeg ffprobe
 
 # D-Bus requires a passwd entry for the UID used by docker run. Match the
 # checkout owner on both local machines and GitHub's UID-1001 hosted runner.
