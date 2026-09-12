@@ -21,9 +21,15 @@
 [![Open pull requests](https://img.shields.io/github/issues-pr/sne11ius/arasaka-kde?color=2ea44f)](https://github.com/sne11ius/arasaka-kde/pulls)
 
 <!-- showcase:start -->
-<p align="center">
-  <img src="assets/wallpapers/mikoshi-16x9.svg" alt="Mikoshi artwork: illuminated coral architecture, cyan light channels, and the Arasaka emblem" width="100%">
-</p>
+<!-- markdownlint-disable MD034 -->
+
+https://github.com/user-attachments/assets/2bf23154-3378-4dbe-a1ff-e951e8be8d2f
+
+<!-- markdownlint-enable MD034 -->
+
+[Watch/download the high-quality film](https://github.com/sne11ius/arasaka-kde/releases/tag/showcase-c1f97b2db0bd) · [Recorded source `c1f97b2`](https://github.com/sne11ius/arasaka-kde/commit/c1f97b2db0bdedb4cf0f0514a795ad384d046dda)
+
+*A real login-to-desktop session, recorded automatically in a disposable VM.*
 <!-- showcase:end -->
 
 <p align="center">
