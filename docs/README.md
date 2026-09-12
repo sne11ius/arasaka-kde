@@ -19,6 +19,7 @@ whole desktop is assembled.
 
 ## Work on the project
 
+- [Recorded showcase](showcase.md): generate the real login-to-desktop film locally or in CI.
 - [Development](development.md): source map, test dependencies, native checks,
   and the distinction between fixture tests and a real desktop session.
 - [Automation](automation.md): every badge's backing service, coverage boundaries,

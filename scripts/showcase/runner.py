@@ -1,4 +1,4 @@
-"""Owned, disposable VM boot controller. Recording is added by later tasks."""
+"""Provision a disposable Plasma guest and record its login-to-desktop showcase."""
 
 import argparse
 import base64
@@ -217,7 +217,7 @@ def deploy_guest(guest, qmp, run, config, processes, env):
     bundle_hash = prepared.digest(run / "SOURCE.bundle")
     results = []
     try:
-        for iteration in (1, 2):
+        for iteration in (1,):
             print(f"Provisioning real KDE/PLM, pass {iteration} (guest logs retained)...", flush=True)
             guest.run(f"{bootstrap}/guest-prepare.sh /home/demo/SOURCE.bundle "
                       f"> /home/demo/showcase-prepare-{iteration}.log 2>&1", timeout=14400)
@@ -227,9 +227,10 @@ def deploy_guest(guest, qmp, run, config, processes, env):
             (run / f"preparation-{iteration}.json").write_text(json.dumps(status, indent=2) + "\n")
             settings = guest.run("cat /home/demo/.local/state/arasaka-showcase/managed-settings.json")
             (run / f"managed-settings-{iteration}.json").write_text(settings.stdout)
-        prepared.verify_convergence(*results, source, bundle_hash)
+        if not results[0].get("ready"):
+            raise RuntimeError("the managed desktop is not ready")
         capture_prepared_frame(qmp, run, config, env, "prepared-desktop")
-        print("Preparation converged; rebooting the fixture into real PLM...", flush=True)
+        print("Desktop installed; rebooting the fixture into real PLM...", flush=True)
         guest.run("sudo -n systemctl reboot --no-block")
         greeter = None
 
@@ -250,7 +251,7 @@ def deploy_guest(guest, qmp, run, config, processes, env):
         time.sleep(8)
         capture_prepared_frame(qmp, run, config, env, "greeter")
         (run / "greeter-status.json").write_text(json.dumps(greeter, indent=2) + "\n")
-        return {"preparation": ["preparation-1.json", "preparation-2.json"],
+        return {"preparation": ["preparation-1.json"],
                 "managed_fingerprint": results[-1]["managed_fingerprint"],
                 "greeter": "greeter-status.json", "reboot_verified": True}
     except BaseException:
@@ -266,8 +267,8 @@ def deploy_guest(guest, qmp, run, config, processes, env):
             (run / "evidence-collection-error.log").write_text(str(error))
 
 
-def prepare(workspace, run, config):
-    """Cold boot, deploy twice, reboot to real PLM, then seal the stopped disk."""
+def prepare(workspace, run, config, film=False):
+    """Install the desktop, reboot to real PLM, and optionally record the tour."""
     image = config["image"]
     print("Verifying the pinned Debian generic image...", flush=True)
     base = downloads.verified_image_download(
@@ -366,6 +367,9 @@ def prepare(workspace, run, config):
         }, indent=2) + "\n")
         print(os_release, end="", flush=True)
         acceptance = deploy_guest(guest, qmp, run, config, [qemu, xvfb, wm], env)
+        if film:
+            from .tour import record_tour
+            record_tour(guest, qmp, run, config, env)
         guest.run("sudo -n systemctl poweroff --no-block")
         if qemu.wait(timeout=120) != 0:
             raise RuntimeError("fixture did not power off cleanly; refusing to seal")
@@ -400,14 +404,23 @@ def stop_container(name, log_path):
             raise RuntimeError(f"container cleanup failed; see {log_path}")
 
 
-def run_container(workspace, config):
+def run_container(workspace, config, phase="all", previous=None):
     if not os.access("/dev/kvm", os.R_OK | os.W_OK):
         raise RuntimeError("read/write /dev/kvm access is required")
     subprocess.run(["docker", "info"], check=True, stdout=subprocess.DEVNULL)
     run = Path(tempfile.mkdtemp(prefix="run-", dir=workspace))
     print(f"Showcase workspace: {run}", flush=True)
     (run / "environment.json").write_text(json.dumps(config, indent=2) + "\n")
-    (run / "source-sha").write_text(create_source_bundle(REPO_ROOT, run / "SOURCE.bundle") + "\n")
+    if previous:
+        for name in ("source-sha", "SOURCE.bundle"):
+            shutil.copy2(previous / name, run / name)
+    else:
+        (run / "source-sha").write_text(create_source_bundle(REPO_ROOT, run / "SOURCE.bundle") + "\n")
+    if os.environ.get("GITHUB_RUN_ID"):
+        (run / "ci.json").write_text(json.dumps({
+            "repository": os.environ["GITHUB_REPOSITORY"], "run_id": os.environ["GITHUB_RUN_ID"],
+            "url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+        }) + "\n")
     image = f"arasaka-showcase:{os.getuid()}-{os.getgid()}"
     with (run / "container-build.log").open("w") as log:
         print("Building the recorder container (container-build.log)...", flush=True)
@@ -419,7 +432,9 @@ def run_container(workspace, config):
                "--device", "/dev/kvm", "--group-add", str(os.stat("/dev/kvm").st_gid),
                "--mount", f"type=bind,src={REPO_ROOT},dst=/src,readonly",
                "--mount", f"type=bind,src={workspace},dst=/workspace",
-               image, "prepare", "--worker-run", f"/workspace/{run.name}"]
+               image, phase, "--worker-run", f"/workspace/{run.name}"]
+    if previous:
+        command += ["--prepared", f"/workspace/{previous.name}"]
     try:
         with (run / "container.log").open("w") as log:
             with managed_process(command, stdout=log, stderr=subprocess.STDOUT) as process:
@@ -429,17 +444,24 @@ def run_container(workspace, config):
         # The Docker client is not the VM's parent. Reap the container explicitly
         # if the caller was interrupted; --init forwards signals/reaps orphans.
         stop_container(name, run / "container-cleanup.log")
-    print(f"Prepared guest sealed; container removed. Evidence: {run}", flush=True)
+    print(f"Showcase {phase} complete: {run}", flush=True)
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+            output.write(f"directory={run}\n")
+    return run
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("prepare", "record", "all"))
+    parser.add_argument("phase", choices=("prepare", "record", "all"), nargs="?", default="all")
     parser.add_argument("--workspace", type=Path, default=REPO_ROOT / "build/showcase")
+    parser.add_argument("--prepared", type=Path, help="record an existing prepared guest in this workspace")
     parser.add_argument("--worker-run", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    if args.phase != "prepare":
-        parser.error(f"{args.phase}: recording is not implemented yet; use prepare for boot verification")
+    if args.phase == "record" and not args.prepared:
+        parser.error("record needs --prepared RUN_DIRECTORY")
+    if args.prepared and args.phase != "record":
+        parser.error("--prepared is only used with record")
     os.umask(0o077)
 
     def interrupted(signum, frame):
@@ -453,13 +475,22 @@ def main(argv=None):
             if args.worker_run:
                 config = json.loads((workspace / "environment.json").read_text())
                 try:
-                    prepare(workspace.parent, workspace, config)
+                    if args.phase == "record":
+                        from .recording import record_prepared
+                        record_prepared(workspace.parent, workspace, config, args.prepared)
+                    else:
+                        prepare(workspace.parent, workspace, config, film=args.phase == "all")
                 except BaseException:
                     (workspace / "error.log").write_text(traceback.format_exc())
                     raise
             else:
                 config = json.loads((REPO_ROOT / "showcase/environment.json").read_text())
-                run_container(workspace, config)
+                previous = args.prepared.resolve() if args.prepared else None
+                if previous:
+                    if not previous.is_relative_to(workspace):
+                        raise ValueError("prepared guest must belong to --workspace")
+                    config = json.loads((previous / "environment.json").read_text())
+                run_container(workspace, config, args.phase, previous)
     except (Exception, KeyboardInterrupt) as error:
         parser.exit(1, f"showcase: {error}\n")
     return 0

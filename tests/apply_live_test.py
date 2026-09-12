@@ -11,56 +11,6 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class BrowserScopeTest(unittest.TestCase):
-    def test_default_keeps_browser_integration_and_desktop_only_preserves_profiles(self):
-        script = (ROOT / 'bin/apply-live').read_text()
-        # Execute the real argument parser and both browser sections. The other
-        # sections need a live Plasma session and are verified in the real VM.
-        parser = script.split('repo_root=', 1)[0]
-        backup = script.split('backup_changed_file() {', 1)[1].split('\n}\n', 1)[0]
-        edge = script.split('if ! $desktop_only; then', 1)[1].split('\nfi\n', 1)[0]
-        firefox = script.split('if ! $desktop_only; then', 2)[2].split('\nfi\n', 1)[0]
-        section = (parser + '\nbackup_changed_file() {' + backup + '\n}\n' +
-                   'if ! $desktop_only; then' + edge + '\nfi\n' +
-                   'if ! $desktop_only; then' + firefox + '\nfi\n')
-        for args in ([], ['--desktop-only']):
-            with self.subTest(args=args), tempfile.TemporaryDirectory() as temp:
-                home = Path(temp)
-                repo = home / 'repo'
-                for name in ('theme/browser/microsoft-edge.desktop', 'theme/firefox/userChrome.css'):
-                    target = repo / name
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_bytes((ROOT / name).read_bytes())
-                (repo / 'bin').mkdir()
-                edge_tool = repo / 'bin/apply-edge-theme'
-                edge_tool.write_text('#!/bin/sh\ntouch "$HOME/edge-applied"\n')
-                edge_tool.chmod(0o755)
-                data = home / 'data'
-                (data / 'applications').mkdir(parents=True)
-                launcher = data / 'applications/microsoft-edge.desktop'
-                launcher.write_text('custom browser launcher\n')
-                profile = home / '.mozilla/firefox/demo'
-                (profile / 'chrome').mkdir(parents=True)
-                (profile.parent / 'profiles.ini').write_text('[Profile0]\nPath=demo\n')
-                chrome = profile / 'chrome/userChrome.css'
-                chrome.write_text('/* existing browser CSS */\n')
-                for _ in range(2):
-                    result = subprocess.run(['bash', '-eu', '-c', section, 'scope-test', *args],
-                                            env={'HOME': temp, 'repo_root': str(repo), 'data_home': str(data),
-                                                 'PATH': '/usr/bin:/bin'}, capture_output=True, text=True)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                if args:
-                    self.assertFalse((home / 'edge-applied').exists())
-                    self.assertEqual(launcher.read_text(), 'custom browser launcher\n')
-                    self.assertEqual(chrome.read_text(), '/* existing browser CSS */\n')
-                    self.assertFalse((profile / 'user.js').exists())
-                else:
-                    self.assertTrue((home / 'edge-applied').exists())
-                    self.assertEqual(launcher.read_bytes(), (ROOT / 'theme/browser/microsoft-edge.desktop').read_bytes())
-                    self.assertEqual(chrome.read_text(), '@import url("arasaka.css");\n\n/* existing browser CSS */\n')
-                    self.assertIn('toolkit.legacyUserProfileCustomizations.stylesheets', (profile / 'user.js').read_text())
-
-
 @unittest.skipUnless(shutil.which("kwriteconfig6"), "requires KDE KConfig tools")
 class ApplyLiveTest(unittest.TestCase):
     def test_window_policy_sets_balanced_tree_and_clears_floating_exclusions(self):

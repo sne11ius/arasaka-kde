@@ -9,6 +9,7 @@
 [![CodeQL analysis](https://img.shields.io/github/actions/workflow/status/sne11ius/arasaka-kde/codeql.yml?branch=main&label=CodeQL&logo=github)](https://github.com/sne11ius/arasaka-kde/actions/workflows/codeql.yml)
 [![Core coverage](https://codecov.io/gh/sne11ius/arasaka-kde/branch/main/graph/badge.svg)](https://app.codecov.io/gh/sne11ius/arasaka-kde)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/sne11ius/arasaka-kde/badge)](https://scorecard.dev/viewer/?uri=github.com/sne11ius/arasaka-kde)
+[![Recorded showcase](https://img.shields.io/github/actions/workflow/status/sne11ius/arasaka-kde/showcase.yml?branch=main&label=showcase&logo=github)](https://github.com/sne11ius/arasaka-kde/actions/workflows/showcase.yml)
 
 [![Latest release](https://img.shields.io/github/v/release/sne11ius/arasaka-kde?color=2ea44f&logo=github)](https://github.com/sne11ius/arasaka-kde/releases/latest)
 [![Project license](https://img.shields.io/github/license/sne11ius/arasaka-kde?color=2ea44f)](LICENSE)
@@ -19,9 +20,11 @@
 [![Open issues](https://img.shields.io/github/issues/sne11ius/arasaka-kde?color=2ea44f)](https://github.com/sne11ius/arasaka-kde/issues)
 [![Open pull requests](https://img.shields.io/github/issues-pr/sne11ius/arasaka-kde?color=2ea44f)](https://github.com/sne11ius/arasaka-kde/pulls)
 
+<!-- showcase:start -->
 <p align="center">
   <img src="assets/wallpapers/mikoshi-16x9.svg" alt="Mikoshi artwork: illuminated coral architecture, cyan light channels, and the Arasaka emblem" width="100%">
 </p>
+<!-- showcase:end -->
 
 <p align="center">
   <a href="#-the-desktop">Explore</a> ·
@@ -31,7 +34,7 @@
   <a href="https://github.com/sne11ius/arasaka-kde/issues/new/choose">Get involved</a>
 </p>
 
-*Original wallpaper artwork, shown without the live rain shader. [What the badges measure →](docs/automation.md#badge-directory)*
+[How the showcase is recorded →](docs/showcase.md) · [What the badges measure →](docs/automation.md#badge-directory)
 
 ## ✨ The desktop
 
