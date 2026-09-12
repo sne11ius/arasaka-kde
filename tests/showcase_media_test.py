@@ -2,6 +2,7 @@
 """Real FFmpeg regressions using TEMPORARY SYNTHETIC fixtures, never showcase proof."""
 
 import hashlib
+from fractions import Fraction
 import json
 import os
 from pathlib import Path
@@ -116,6 +117,40 @@ class InspectionTest(SyntheticMediaTest):
         for seconds in (-1, float("nan"), float("inf")):
             with self.subTest(seconds=seconds), self.assertRaises(ValueError):
                 media.extract_frame(path, seconds)
+
+    def test_extract_reports_returned_frame_pts_after_seek_between_frames(self):
+        image = media.extract_frame(self.clip(), 0.25)
+        self.assertAlmostEqual(image.info.get("seconds", -1), 8 / 30, places=6)
+        self.assertEqual(image.info["frame_index"], 8)
+        self.assertAlmostEqual(float(Fraction(image.info["time_base"]) *
+                                     (image.info["pts"] - image.info["start_pts"])), 8 / 30)
+
+    def test_extract_normalizes_nonzero_pts_and_handles_b_frame_reordering(self):
+        source = self.clip()
+        shifted = self.root / "shifted-b-frames.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-i", str(source), "-an",
+                        "-c:v", "libx264", "-bf", "3", "-threads", "2",
+                        "-output_ts_offset", "5", str(shifted)],
+                       check=True, capture_output=True, timeout=30)
+        image = media.extract_frame(shifted, 0.25)
+        self.assertAlmostEqual(image.info.get("seconds", -1), 8 / 30, places=6)
+        self.assertEqual(image.info["frame_index"], 8)
+        self.assertAlmostEqual(float(Fraction(image.info["time_base"]) * image.info["pts"]),
+                               5 + 8 / 30, places=6)
+        difference = ImageChops.difference(image, media.extract_frame(source, 8 / 30))
+        self.assertLess(sum(ImageStat.Stat(difference).mean) / 3, 5)
+
+    def test_decoder_rejects_actual_pts_that_disagree_with_probed_selection(self):
+        source = self.clip()
+        timeline = media._frame_timeline(source)
+        shifted = self.root / "different-pts.mp4"
+        # Same compressed pictures/time base, different real timestamps. This
+        # catches trusting the probe alone without verifying the RGB decoder PTS.
+        subprocess.run(["ffmpeg", "-v", "error", "-i", str(source), "-c", "copy",
+                        "-output_ts_offset", "5", str(shifted)],
+                       check=True, capture_output=True, timeout=30)
+        with self.assertRaisesRegex(media.MediaError, "PTS output mismatch"):
+            media._decode_selected(shifted, timeline, [8])
 
     def test_poster_is_requested_video_frame_and_failure_is_atomic(self):
         path = self.clip()
@@ -254,6 +289,52 @@ class ValidationTest(SyntheticMediaTest):
                              f"{first},N)/3)':cb=128:cr=128")
             with self.subTest(name=name), self.assertRaisesRegex(media.MediaError, name):
                 self.validate(path)
+
+    def test_one_frame_flash_per_chapter_cannot_prove_sustained_rain(self):
+        # The old 20/50/80% seeks returned frames 3/8/12 in each 15-frame
+        # chapter. A flash only at frame 8 moved both shared-middle comparisons.
+        path = self.clip(source="nullsrc=size=160x96:rate=30,"
+                         "geq=lum='100+60*eq(mod(N,15),8)':cb=128:cr=128")
+        with self.assertRaisesRegex(media.MediaError, "background|motion"):
+            self.validate(path)
+
+    def test_interior_black_frame_cannot_be_replaced_by_next_chapters_frame(self):
+        self.chapters[2].update(start=1.0, end=1.03)
+        path = self.clip(source="nullsrc=size=160x96:rate=30,"
+                         "geq=lum='if(eq(N,30),0,100+60*sin(X/9+Y/11+N/3))':cb=128:cr=128")
+        with self.assertRaisesRegex(media.MediaError, "launcher.*black|black.*launcher"):
+            self.validate(path)
+
+    def test_interior_chapter_with_no_frame_presentation_time_is_rejected(self):
+        self.chapters[2].update(start=1.001, end=1.002)
+        with self.assertRaisesRegex(media.MediaError, "launcher.*frame|frame.*launcher"):
+            self.validate(self.moving())
+
+    def test_short_visible_chapter_reports_its_only_actual_frame(self):
+        self.chapters[2].update(start=1.0, end=1.03)
+        result = self.validate(self.moving())
+        samples = result["chapters"][2]["samples"]
+        self.assertEqual(len(samples), 1)
+        self.assertEqual(samples[0]["seconds"], 1.0)
+        self.assertEqual(samples[0]["frame_index"], 30)
+        timeline = result["timeline"]
+        self.assertEqual(Fraction(timeline["time_base"]) *
+                         (samples[0]["pts"] - timeline["start_pts"]), 1)
+
+    def test_evidence_uses_actual_frame_times_and_independent_short_motion_pairs(self):
+        result = self.validate(self.moving())
+        for chapter in result["chapters"]:
+            for sample in chapter["samples"]:
+                self.assertAlmostEqual(sample["seconds"] * 30, round(sample["seconds"] * 30),
+                                       places=5)
+            for region in chapter["regions"]:
+                comparisons = region["comparisons"]
+                self.assertGreaterEqual(len(comparisons), 2)
+                endpoints = [point for pair in comparisons for point in (pair["start"], pair["end"])]
+                self.assertEqual(len(set(endpoints)), len(endpoints), "motion pairs share a frame")
+                for pair in comparisons:
+                    self.assertGreater(pair["end"], pair["start"])
+                    self.assertLessEqual(pair["end"] - pair["start"], 0.2 + 1e-6)
 
     def test_black_frames_are_rejected_even_in_nonrain_chapters(self):
         path = self.clip(source="nullsrc=size=160x96:rate=30,"

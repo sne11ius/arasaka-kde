@@ -6,10 +6,10 @@ All output replacement is atomic, and two-pass work belongs to a private directo
 
 from fractions import Fraction
 import hashlib
-import io
 import json
 import math
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import tempfile
@@ -30,7 +30,7 @@ def _diagnostic(value):
     return value.decode(errors="replace") if isinstance(value, bytes) else (value or "")
 
 
-def _run(command, timeout=120):
+def _run(command, timeout=120, *, capture_log=False):
     command = [str(arg) for arg in command]
     description = shlex.join(command)
     try:
@@ -40,12 +40,12 @@ def _run(command, timeout=120):
                          f"{_diagnostic(error.stderr)}") from error
     except OSError as error:
         raise MediaError(f"Cannot run {description}: {error}") from error
-    # All commands use error-level logging. Decode errors can otherwise be reported
-    # on stderr while FFmpeg/ffprobe still exit successfully with partial output.
-    if result.returncode or result.stderr.strip():
+    # Default commands use error-level logging: stderr can reveal partial decode
+    # even with exit zero. The -xerror RGB decoder instead captures showinfo logs.
+    if result.returncode or (result.stderr.strip() and not capture_log):
         raise MediaError(f"Media command exited {result.returncode}: {description}\n"
                          f"{_diagnostic(result.stderr)}")
-    return result.stdout
+    return (result.stdout, result.stderr) if capture_log else result.stdout
 
 
 def inspect_video(path):
@@ -85,22 +85,73 @@ def inspect_video(path):
     return result
 
 
+def _frame_timeline(path):
+    """Read decoded presentation-order PTS, keeping rational time-base precision."""
+    path = Path(path).resolve()
+    raw = _run(["ffprobe", "-v", "error", "-threads", "2", "-select_streams", "v:0",
+                "-show_frames", "-show_entries", "stream=width,height,time_base:frame=pts",
+                "-of", "json", path])
+    try:
+        probe = json.loads(raw)
+        stream = probe["streams"][0]
+        time_base = Fraction(stream["time_base"])
+        pts = [int(frame["pts"]) for frame in probe["frames"]]
+        if not pts or time_base <= 0 or any(a >= b for a, b in zip(pts, pts[1:])):
+            raise ValueError("missing or non-increasing frame presentation timestamps")
+        return {"pts": pts, "time_base": time_base, "start_pts": pts[0],
+                "width": int(stream["width"]), "height": int(stream["height"])}
+    except (ValueError, TypeError, KeyError, IndexError, ZeroDivisionError) as error:
+        raise MediaError(f"Unreadable frame timeline from {path}: {error}\n"
+                         f"ffprobe: {_diagnostic(raw)}") from error
+
+
+def _decode_selected(path, timeline, indices):
+    """Decode exact frame indices once, verifying the actual FFmpeg output PTS.
+
+    No seek or FPS conversion can substitute a neighboring frame. showinfo is
+    attached to the RGB filter output; -xerror makes decode errors fatal even
+    though info-level timestamp diagnostics are captured on successful runs.
+    """
+    indices = sorted(set(indices))
+    selection = "+".join(f"eq(n,{index})" for index in indices)
+    raw, log = _run(["ffmpeg", "-hide_banner", "-loglevel", "info", "-nostdin", "-xerror",
+                     "-copyts", "-threads", "2", "-i", Path(path).resolve(), "-map", "0:v:0",
+                     "-vf", f"select='{selection}',format=rgb24,showinfo=checksum=0",
+                     "-an", "-fps_mode", "passthrough", "-c:v", "rawvideo", "-threads", "1",
+                     "-f", "rawvideo", "pipe:1"], capture_log=True)
+    log = _diagnostic(log)
+    bases = re.findall(r"config in time_base:\s*(\d+/\d+)", log)
+    decoded_pts = [int(value) for value in re.findall(r"\bn:\s*\d+\s+pts:\s*(-?\d+)\s+pts_time:", log)]
+    frame_bytes = timeline["width"] * timeline["height"] * 3
+    if (not bases or any(Fraction(base) != timeline["time_base"] for base in bases)
+            or decoded_pts != [timeline["pts"][index] for index in indices]
+            or len(raw) != frame_bytes * len(indices)):
+        raise MediaError(f"Decoded frame/PTS output mismatch from {path}\n{log}")
+    frames = {}
+    for offset, (index, pts) in enumerate(zip(indices, decoded_pts)):
+        image = Image.frombytes("RGB", (timeline["width"], timeline["height"]),
+                                raw[offset * frame_bytes:(offset + 1) * frame_bytes])
+        image.info.update(frame_index=index, pts=pts, time_base=str(timeline["time_base"]),
+                          start_pts=timeline["start_pts"],
+                          seconds=float((pts - timeline["start_pts"]) * timeline["time_base"]))
+        frames[index] = image
+    return frames
+
+
 def extract_frame(path, seconds):
-    """Decode the frame at video-relative seconds to an independent RGB image."""
+    """Return the first RGB frame presented at/after video-relative seconds.
+
+    image.info records actual seconds, frame_index, pts, time_base and start_pts.
+    The video's first presented frame is time zero, including nonzero-start media.
+    """
     if not math.isfinite(seconds) or seconds < 0:
         raise ValueError("frame seconds must be finite and nonnegative")
-    path = Path(path).resolve()
-    raw = _run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
-                "-threads", "2", "-ss", str(seconds), "-i", path, "-map", "0:v:0",
-                "-frames:v", "1", "-an", "-c:v", "png", "-threads", "1",
-                "-pix_fmt", "rgb24", "-f", "image2pipe", "pipe:1"])
-    if not raw:
-        raise MediaError(f"No decoded frame output from {path} at {seconds}s")
-    try:
-        with Image.open(io.BytesIO(raw)) as image:
-            return image.convert("RGB")
-    except OSError as error:
-        raise MediaError(f"Unreadable decoded frame from {path} at {seconds}s: {error}") from error
+    timeline = _frame_timeline(path)
+    target = Fraction(str(seconds))
+    for index, pts in enumerate(timeline["pts"]):
+        if (pts - timeline["start_pts"]) * timeline["time_base"] >= target:
+            return _decode_selected(path, timeline, [index])[index]
+    raise MediaError(f"No decoded frame output from {path} at/after {seconds}s")
 
 
 def _check_video(info, width, height, fps):
@@ -157,11 +208,37 @@ def _background_boxes(width, height):
     )]
 
 
+def _chapter_selection(chapter, timeline, duration):
+    start = max(Fraction(0), Fraction(str(chapter["start"])))
+    end = min(Fraction(str(duration)), Fraction(str(chapter["end"])))
+    times = [(pts - timeline["start_pts"]) * timeline["time_base"] for pts in timeline["pts"]]
+    eligible = [index for index, seconds in enumerate(times) if start <= seconds < end]
+    if not eligible:
+        raise MediaError(f"chapter {chapter['name']} has no actual frame within its timing")
+    centers = [start + (end - start) * fraction for fraction in
+               (Fraction(1, 5), Fraction(1, 2), Fraction(4, 5))]
+    if chapter["name"] not in RAIN_CHAPTERS:
+        return sorted({min(eligible, key=lambda index: abs(times[index] - center))
+                       for center in centers}), []
+    # Disjoint windows: at most 0.2s wide and at most 20% of a chapter. Selecting
+    # actual endpoints inside each window prevents a single flash from supplying
+    # the motion evidence for more than one pair. Never compare across windows.
+    half_width = min(Fraction(1, 10), (end - start) / 10)
+    pairs = []
+    for center in centers:
+        window = [index for index in eligible if center - half_width <= times[index] <= center + half_width]
+        if len(window) < 2:
+            raise MediaError(f"chapter {chapter['name']} needs two actual frames in each "
+                             "separated background motion window")
+        pairs.append((window[0], window[-1]))
+    return [index for pair in pairs for index in pair], pairs
+
+
 def validate_media(path, chapters, width, height, fps=30, min_duration=60, max_duration=150):
     """Validate measured media and return video/chapters/thresholds evidence.
 
-    Three interior frames per chapter must be visible. Rain needs sustained
-    changes across both sample intervals in at least two inset background crops.
+    Actual PTS must lie inside each half-open chapter interval. Rain needs changes
+    in three separated short pairs with no shared frame, in two background crops.
     Up to 0.5s film-boundary skew is clamped for sampling; overlaps are rejected.
     This detects distributed animation, not the semantic identity of rain/UI.
     """
@@ -174,39 +251,44 @@ def validate_media(path, chapters, width, height, fps=30, min_duration=60, max_d
     if not min_duration <= info["duration"] <= max_duration:
         raise MediaError(f"Video duration {info['duration']} outside {min_duration}..{max_duration}s")
     evidence = _chapter_timings(chapters, info["duration"])
+    timeline = _frame_timeline(path)
+    if (len(timeline["pts"]) != info["frame_count"]
+            or (timeline["width"], timeline["height"]) != (width, height)):
+        raise MediaError("Frame timeline does not match inspected video")
+    selections = [_chapter_selection(chapter, timeline, info["duration"]) for chapter in evidence]
+    frames = _decode_selected(path, timeline, [index for indices, _ in selections for index in indices])
     thresholds = {"boundary_tolerance": BOUNDARY_TOLERANCE, "nonblack_luma": 8,
                   "min_nonblack_fraction": 0.01, "changed_channel_delta": 3,
                   "min_changed_fraction": 0.02, "min_mean_abs_delta": 0.2}
-    for chapter in evidence:
-        start, end = max(0, chapter["start"]), min(info["duration"], chapter["end"])
-        times = [min(start + (end - start) * fraction, info["duration"] - 1 / fps)
-                 for fraction in (.2, .5, .8)]
-        if any(seconds < start or seconds >= end for seconds in times):
-            raise MediaError(f"chapter {chapter['name']} has no sampleable frame within its timing")
-        frames = [extract_frame(path, seconds) for seconds in times]
+    for chapter, (indices, pairs) in zip(evidence, selections):
         samples = []
-        for seconds, frame in zip(times, frames):
+        for index in indices:
+            frame = frames[index]
+            actual = (frame.info["pts"] - timeline["start_pts"]) * timeline["time_base"]
+            if not Fraction(str(chapter["start"])) <= actual < Fraction(str(chapter["end"])):
+                raise MediaError(f"Decoded frame outside chapter {chapter['name']}: {actual}s")
             luma = frame.convert("L")
             histogram = luma.histogram()
             nonblack = sum(histogram[thresholds["nonblack_luma"] + 1:]) / (width * height)
-            samples.append({"seconds": seconds, "mean_luma": ImageStat.Stat(luma).mean[0],
+            samples.append({"seconds": float(actual), "frame_index": index, "pts": frame.info["pts"],
+                            "mean_luma": ImageStat.Stat(luma).mean[0],
                             "nonblack_fraction": nonblack})
             if nonblack < thresholds["min_nonblack_fraction"]:
-                raise MediaError(f"chapter {chapter['name']} has black decoded frame at {seconds}s")
+                raise MediaError(f"chapter {chapter['name']} has black decoded frame at {float(actual)}s")
         chapter.update(samples=samples, regions=[], moving_regions=0)
         if chapter["name"] not in RAIN_CHAPTERS:
             continue
         for name, box in _background_boxes(width, height):
-            crops = [frame.crop(box) for frame in frames]
             comparisons = []
-            for index, (before, after) in enumerate(zip(crops, crops[1:])):
-                difference = ImageChops.difference(before, after)
+            for first, last in pairs:
+                difference = ImageChops.difference(frames[first].crop(box), frames[last].crop(box))
                 bands = difference.split()
                 maximum = ImageChops.lighter(ImageChops.lighter(bands[0], bands[1]), bands[2])
                 histogram = maximum.histogram()
                 changed = sum(histogram[thresholds["changed_channel_delta"] + 1:])
                 comparisons.append({
-                    "start": times[index], "end": times[index + 1],
+                    "start": frames[first].info["seconds"], "end": frames[last].info["seconds"],
+                    "start_frame_index": first, "end_frame_index": last,
                     "mean_abs_delta": sum(ImageStat.Stat(difference).mean) / 3,
                     "changed_fraction": changed / (maximum.width * maximum.height),
                 })
@@ -219,7 +301,8 @@ def validate_media(path, chapters, width, height, fps=30, min_duration=60, max_d
         if chapter["moving_regions"] < 2:
             raise MediaError(f"chapter {chapter['name']} needs motion in two background regions; "
                              f"measured {chapter['moving_regions']}: {chapter['regions']}")
-    return {"video": info, "chapters": evidence, "thresholds": thresholds}
+    return {"video": info, "chapters": evidence, "thresholds": thresholds,
+            "timeline": {"time_base": str(timeline["time_base"]), "start_pts": timeline["start_pts"]}}
 
 
 def _target_path(source, target):
