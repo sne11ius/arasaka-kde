@@ -116,28 +116,25 @@ def record_tour(guest, qmp, directory, config, env):
         move(width * .22, height * .32, .8)
         move(width * .78, height * .68, 1.8)
 
-    def open_terminal(command):
-        args = ["konsole", "--separate", "--hide-menubar", "--profile", "Showcase",
-                "-e", "zsh", "-ic", command + "; exec zsh"]
-        session("p=subprocess.Popen(" + repr(args) + ",env=env,stdin=subprocess.DEVNULL,"
-                "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True); print(p.pid)")
-        time.sleep(2)
-
     def open_quake():
+        session("from pathlib import Path; p=Path('/home/demo/.zshrc'); "
+                "p.write_text(p.read_text()+\"\\nPROMPT='%F{red}%1~%f %# '\\n\")")
+        desktop_command(["kwriteconfig6", "--file", "/home/demo/.local/share/konsole/Showcase.profile",
+                         "--group", "Appearance", "--key", "Font", "JetBrains Mono,9,-1,5,400,0,0,0,0,0"])
         style = (Path(__file__).resolve().parents[2] / "showcase/streamdeck/quake.qss").read_text()
         directory_name = "/home/demo/.local/share/konsole"
         style_path = directory_name + "/quake.qss"
         layout_path = "/home/demo/.local/state/showcase-quake.json"
 
-        def pane(command, number, lines):
+        def pane(number, lines):
             return {"SessionRestoreId": number, "Columns": 85, "Lines": lines,
-                    "WorkingDirectory": "/home/demo/arasaka-kde", "Command": command}
+                    "WorkingDirectory": "/home/demo/arasaka-kde"}
 
         layout = {"Orientation": "Horizontal", "Widgets": [
-            pane("btop", 1, 38),
+            pane(1, 38),
             {"Orientation": "Vertical", "Widgets": [
-                pane("clear; fastfetch --logo small --structure OS:DE:WM:Theme:Icons", 2, 18),
-                pane("clear; batcat --color=always --paging=never --line-range=1:12 native/rain/dropletsimulation.h", 3, 18),
+                pane(2, 18),
+                pane(3, 18),
             ]},
         ]}
         session("from pathlib import Path; "
@@ -174,6 +171,13 @@ def record_tour(guest, qmp, directory, config, env):
                       "w.frameGeometry={x:g.x,y:g.y,width:g.width,height:Math.round(g.height*.755)}; "
                       "workspace.activeWindow=w;")
         return pid, bus, active
+
+    def pane_command(x, y, command, hold=3):
+        move(width * x, height * y, .5)
+        xdo("click", "1")
+        type_text(command)
+        key("Return")
+        time.sleep(hold)
 
     windows = xdo("search", "--onlyvisible", "--name", "arasaka-showcase").splitlines()
     if not windows:
@@ -216,44 +220,33 @@ def record_tour(guest, qmp, directory, config, env):
             with chapter("desktop-rain"):
                 rain_clicks("desktop-rain")
                 time.sleep(8)
-            with chapter("launcher"):
-                session("from pathlib import Path; p=Path('/home/demo/.zshrc'); "
-                        "p.write_text(p.read_text()+\"\\nPROMPT='%F{red}%1~%f %# '\\n\")")
-                desktop_command(["kwriteconfig6", "--file", "/home/demo/.local/share/konsole/Showcase.profile",
-                                 "--group", "Appearance", "--key", "Font", "JetBrains Mono,9,-1,5,400,0,0,0,0,0"])
-                desktop_command(["kwriteconfig6", "--file", "konsolerc", "--group", "MainWindow",
-                                 "--group", "Toolbar mainToolBar", "--key", "Hidden", "--type", "bool", "true"])
-                key("Super_L")
+            with chapter("quake-konsole"):
+                quake_pid, quake_bus, layout_session = open_quake()
                 time.sleep(2)
-                type_text("Konsole")
+            with chapter("commands"):
+                pane_command(.25, .20, "btop", 4)
+                pane_command(.78, .12, "fastfetch --logo small --structure OS:DE:WM:Theme:Icons", 4)
+                pane_command(.78, .48, "git log -6 --oneline -- native/rain", 4)
+                pane_command(.78, .48,
+                             "clear; batcat --paging=never --color=always --line-range=1:12 native/rain/dropletsimulation.h", 5)
+            with chapter("tabs-and-splits"):
+                desktop_command(["qdbus6", quake_bus, "/Windows/1", "newSession",
+                                 "Arasaka Showcase", "/home/demo/arasaka-kde"])
                 time.sleep(1)
+                type_text("pwd")
+                key("Return")
+                time.sleep(1)
+                type_text("ls --color=auto")
                 key("Return")
                 time.sleep(3)
-                type_text("fastfetch")
-                key("Return")
-                time.sleep(4)
-                first_terminal = int(desktop_command(["pgrep", "-u", "1000", "-x", "konsole"]).splitlines()[0])
-            with chapter("terminals"):
-                open_terminal("batcat --color=always --paging=never --line-range=1:16 native/rain/dropletsimulation.h")
-                open_terminal("git log -6 --oneline -- native/rain")
-                window_action(f"workspace.activeWindow = workspace.windowList().find(w => w.pid === {first_terminal});")
-                time.sleep(.5)
-                key("ctrl+l")
-                type_text("fastfetch --logo small --structure OS:DE:WM:Theme:Icons")
-                key("Return")
+                desktop_command(["qdbus6", quake_bus, "/Windows/1", "setCurrentSession", layout_session])
+                move(width * .5, height * .27, .5)
+                time.sleep(.6)
+                xdo("mousedown", "1")
+                move(width * .56, height * .27, .8)
+                xdo("mouseup", "1")
                 time.sleep(2)
-                window_action("workspace.activeWindow = workspace.windowList().filter(w => w.resourceClass === 'org.kde.konsole').sort((a,b) => b.frameGeometry.height - a.frameGeometry.height)[0];")
-                time.sleep(.5)
-                key("ctrl+l")
-                type_text("btop")
-                key("Return")
-                time.sleep(9)
-            with chapter("effects"):
-                window_action(f"const w = workspace.windowList().find(w => w.pid === {first_terminal}); workspace.activeWindow = w; w.minimized = true;")
-                time.sleep(3)
-                window_action(f"const w = workspace.windowList().find(w => w.pid === {first_terminal}); w.minimized = false; workspace.activeWindow = w;")
-                time.sleep(3)
-                time.sleep(2)
+                screenshot("quake-splits")
             with chapter("menu"):
                 key("Super_L")
                 time.sleep(2)
@@ -263,25 +256,7 @@ def record_tour(guest, qmp, directory, config, env):
                 screenshot("launcher-menu")
                 key("Escape")
                 time.sleep(1)
-            with chapter("quake-konsole"):
-                window_action("workspace.windowList().filter(w=>w.resourceClass==='org.kde.konsole').forEach(w=>w.minimized=true);")
-                time.sleep(1)
-                quake_pid, quake_bus, layout_session = open_quake()
-                time.sleep(4)
-                shell_session = desktop_command(["qdbus6", quake_bus, "/Windows/1", "newSession",
-                                                  "Arasaka Showcase", "/home/demo/arasaka-kde"])
-                time.sleep(1)
-                type_text("ls --color=auto")
-                key("Return")
-                time.sleep(2)
-                desktop_command(["qdbus6", quake_bus, "/Windows/1", "setCurrentSession", layout_session])
-                move(width * .5, height * .27, .5)
-                time.sleep(.6)
-                xdo("mousedown", "1")
-                move(width * .56, height * .27, .8)
-                xdo("mouseup", "1")
-                time.sleep(2)
-                screenshot("quake-splits")
+            with chapter("quake-toggle"):
                 window_action(f"workspace.windowList().find(w=>w.pid==={quake_pid}).minimized=true;")
                 time.sleep(2)
                 window_action(f"const w=workspace.windowList().find(w=>w.pid==={quake_pid}); w.minimized=false; workspace.activeWindow=w;")

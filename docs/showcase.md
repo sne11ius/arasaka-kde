@@ -3,8 +3,9 @@
 [Docs](README.md) / Showcase
 
 The README film is made from a real disposable VM: PLM login, interactive rain,
-Plasma, the launcher, styled Konsole windows, tiling/effects, and the Stream Deck
-Quake Konsole with its borderless dropdown, split panes and bottom tabs.
+Plasma, the launcher, and the Stream Deck Quake Konsole. All command demonstrations
+run inside that custom window's split panes and bottom tabs, followed by its
+borderless dropdown hide/show animation.
 GitHub Actions runs the same scripts available in the checkout.
 
 ## Record it
