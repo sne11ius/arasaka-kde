@@ -23,11 +23,11 @@
 <!-- showcase:start -->
 <!-- markdownlint-disable MD034 -->
 
-https://github.com/user-attachments/assets/7d40ffa4-6c69-444f-8f1f-3c3c5b100f24
+https://github.com/user-attachments/assets/1c24b01c-a80a-4af8-9526-67818c8e317b
 
 <!-- markdownlint-enable MD034 -->
 
-[Watch/download the high-quality film](https://github.com/sne11ius/arasaka-kde/releases/tag/showcase-640d26333fd2) · [Recorded source `640d263`](https://github.com/sne11ius/arasaka-kde/commit/640d26333fd2668b17a8b316ec7509c416b74285)
+[Watch/download the high-quality film](https://github.com/sne11ius/arasaka-kde/releases/tag/showcase-7823faca5134) · [Recorded source `7823fac`](https://github.com/sne11ius/arasaka-kde/commit/7823faca5134144ccfb0cace72dac142b658051e)
 
 *A real login-to-desktop session, recorded automatically in a disposable VM.*
 <!-- showcase:end -->
