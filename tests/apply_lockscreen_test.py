@@ -55,6 +55,7 @@ class ApplyLockscreenTest(unittest.TestCase):
             "selectedShaderPath": self.shader.as_uri(), "selectedShaderCode": "", "commonCode": "",
             "running": "true", "shaderSpeed": "0.75", "targetFps": "30", "resolutionScale": "1",
             "pauseMode": "3", "checkActiveScreen": "true", "excludeWindows": "",
+            "rainMinimumIllumination": "0.15", "rainIlluminationSeconds": "30",
             "mouseEnabled": "true", "audioEnabled": "false", "windowsEnabled": "false",
             "playlistEnabled": "false", "enableShaderTweaks": "false", "watchSourceFile": "false",
             "useBufferA": "false", "useBufferB": "false", "useBufferC": "false", "useBufferD": "false",

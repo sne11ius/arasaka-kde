@@ -19,7 +19,8 @@ SHADER = "Heartfelt_No_Heart.frag"
 RAIN = "Interactive_Rain.frag"
 PENDING = "arasakaRainPending"
 RAIN_SOURCES = ("dropletsimulation.h", "dropletsimulation.cpp", "rainfieldrenderer.h",
-                "rainfieldrenderer.cpp", "raininput.h", "raininput.cpp")
+                "rainfieldrenderer.cpp", "raininput.h", "raininput.cpp", "windowillumination.h",
+                "windowcountmodel.h", "windowcountmodel.cpp")
 HEADER = "// Heartfelt - by Martijn Steinrucken aka BigWings - 2017\n"
 LICENSE = "// License Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.\n"
 
@@ -175,6 +176,10 @@ class ShaderWallpaperScriptTests(unittest.TestCase):
         self.assertTrue(output.startswith("ARASAKA_SHADER_WALLPAPER="), output)
         login = runpy.run_path(str(ROOT / "bin/apply-plm"))["SHADER"]
         desktop = desktops[1]["config"]
+        self.assertEqual(desktop.get("rainMinimumIllumination"), .15)
+        self.assertEqual(desktop.get("rainIlluminationSeconds"), 30)
+        self.assertEqual(login.get("rainMinimumIllumination"), "0.15")
+        self.assertEqual(login.get("rainIlluminationSeconds"), "30")
         for key, value in login.items():
             if key == "pauseMode":
                 self.assertEqual(value, "3")
@@ -891,7 +896,7 @@ class ApplyShaderWallpaperTests(unittest.TestCase):
     def test_stage_only_exports_extended_plugin_and_both_shaders_with_system_urls(self):
         self.seed_previous_install()
         destination = self.base / "system-stage"
-        # Only the six explicit files belong in the build inputs.
+        # Only the explicit runtime files belong in the build inputs.
         (self.repo / "native/rain/ignored.cpp").symlink_to(self.base / "missing.cpp")
         result = self.run_installer("--stage-only", str(destination))
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)

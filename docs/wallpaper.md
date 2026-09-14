@@ -14,6 +14,7 @@ and inherited momentum.
 | Artwork and effect | Mikoshi + Interactive Rain | Same | Same |
 | Target frame rate | 30 FPS | 30 FPS | 30 FPS |
 | Playback / resolution | 75% / full | Same | Same |
+| Illumination | Adapts to application windows on each display | Dark, zero-window level | Dark, zero-window level |
 | Hover and click splashes | Passive native observer | Same observer, locker-local | Same observer, with PLM pointer bridge |
 | Animation lifecycle | Pauses behind maximized/fullscreen windows on that screen | Animates while visible | Animates while visible |
 | Assets | User-local | User-local | System package under `/usr/share` |
@@ -109,6 +110,8 @@ disable the locker's software-rendering crash recovery.
 Managed defaults enable mouse input and texture channel 0. Audio capture,
 window-reactive shader input, playlists, source watching, and generic A–D buffer
 passes are disabled. The native rain field is independent of those buffer passes.
+The illumination count uses a separate native window model, independent of the
+optional window-reactive shader input and pause exclusions.
 
 - **Hover:** move over exposed wallpaper to influence nearby droplets.
 - **Splash:** use an unmodified left press on a visible drop. Holding does not
@@ -123,6 +126,35 @@ passes are disabled. The native rain field is independent of those buffer passes
 Use the wallpaper's settings to change speed, resolution, or mouse permission.
 Selecting Interactive Rain from the gallery does not itself turn mouse input on.
 Explicitly reapplying the managed desktop command restores the shared defaults.
+
+### Window-adaptive illumination
+
+Each display adapts independently to the number of non-minimized application
+windows on its current virtual desktop and activity. Unfocused or overlapping
+windows count, including multiple windows from the same application and windows
+marked “Skip taskbar.” Panels, desktop surfaces, and attention requests from other
+workspaces do not add illumination. Show Desktop has a zero-window target.
+
+| Windows | Illumination relative to the previous wallpaper |
+| --- | --- |
+| 0 | 15% |
+| 1 | 39% |
+| 2 | 56% |
+| 4 | 78% |
+| 8 | 94% |
+
+The curve approaches 100% as more windows appear. Brightening and dimming settle
+95% toward their new target in **30 real seconds**, independent of rain speed and
+rendering pauses. A one-second window changes illumination by less than 1.5
+percentage points, with no abrupt step when it opens or closes.
+
+Shared defaults are `rainMinimumIllumination=0.15` and
+`rainIlluminationSeconds=30`. Lock/login use the zero-application-window level;
+their authentication UI does not count. On Wayland, application/shell classification
+uses cached, asynchronous KWin window-type lookups. Unresolved new windows are
+retried until their metadata becomes available; no frame-driven window polling is
+added. Older native modules already cached in Plasma retain the previous lighting
+until a new session loads the updated module.
 
 Large drops sag under gravity and elongate while sliding; small stationary beads
 remain round. Fog uses filtered mip levels, and lightning retains one in four
@@ -157,7 +189,7 @@ Shader licenses differ from the renderer's GPL and the project's EUPL. See
 
 The immutable renderer archive comes from [`manifest/components.tsv`](../manifest/components.tsv)
 through `fetch-components`. The installer extracts a temporary source tree,
-applies the host patch, and copies the six explicit native rain source/header
+applies the host patch, and copies the nine explicit native rain source/header
 files into upstream's existing module. Upstream `build.sh` and `cmake --install`
 are not executed.
 

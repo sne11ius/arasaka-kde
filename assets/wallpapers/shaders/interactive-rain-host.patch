@@ -1,12 +1,15 @@
 --- a/src/core/shaderengine.h
 +++ b/src/core/shaderengine.h
-@@ -17,6 +17,11 @@
+@@ -17,6 +17,14 @@
  #include <QVector4D>
  #include <QVector3D>
  #include <QVector2D>
 +#include "rain/dropletsimulation.h"
 +#include "rain/rainfieldrenderer.h"
 +#include "rain/raininput.h"
++#include "rain/windowillumination.h"
++#include "rain/windowcountmodel.h"
++#include <chrono>
 +#include <atomic>
 +#include <limits>
  
@@ -23,44 +26,61 @@
  /**
   * @brief Main shader rendering engine using QQuickFramebufferObject
   * 
-@@ -43,6 +52,9 @@
+@@ -43,6 +52,13 @@
      
      // Playback control
      Q_PROPERTY(bool running READ running WRITE setRunning NOTIFY runningChanged)
 +    Q_PROPERTY(bool rainActive READ rainActive NOTIFY rainActiveChanged)
 +    Q_PROPERTY(bool rainLockScreenHost READ rainLockScreenHost WRITE setRainLockScreenHost NOTIFY rainLockScreenHostChanged)
 +    Q_PROPERTY(int rainGreeterInteractionVersion READ rainGreeterInteractionVersion CONSTANT)
++    Q_PROPERTY(int rainWindowCount READ rainWindowCount WRITE setRainWindowCount NOTIFY rainWindowCountChanged)
++    Q_PROPERTY(QObject *rainWindowModel READ rainWindowModel CONSTANT)
++    Q_PROPERTY(qreal rainMinimumIllumination READ rainMinimumIllumination WRITE setRainMinimumIllumination NOTIFY rainMinimumIlluminationChanged)
++    Q_PROPERTY(qreal rainIlluminationSeconds READ rainIlluminationSeconds WRITE setRainIlluminationSeconds NOTIFY rainIlluminationSecondsChanged)
      Q_PROPERTY(qreal speed READ speed WRITE setSpeed NOTIFY speedChanged)
      Q_PROPERTY(int targetFps READ targetFps WRITE setTargetFps NOTIFY targetFpsChanged)
      Q_PROPERTY(int currentFps READ currentFps NOTIFY currentFpsChanged)
-@@ -171,6 +183,9 @@
+@@ -171,6 +183,16 @@
      QUrl shaderSource() const { return m_shaderSource; }
      QString shaderCode() const { return m_shaderCode; }
      bool running() const { return m_running; }
 +    bool rainActive() const { return m_rainActive; }
 +    bool rainLockScreenHost() const { return m_rainLockScreenHost; }
 +    int rainGreeterInteractionVersion() const { return 1; }
++    int rainWindowCount() const { return m_rainWindowCount; }
++    QObject *rainWindowModel() {
++        if (!m_rainWindowModel) m_rainWindowModel = std::make_unique<arasaka::rain::WindowCountModel>();
++        return m_rainWindowModel.get();
++    }
++    qreal rainMinimumIllumination() const { return m_rainIllumination.minimum(); }
++    qreal rainIlluminationSeconds() const { return m_rainIllumination.seconds(); }
      qreal speed() const { return m_speed; }
      int targetFps() const { return m_targetFps; }
      int currentFps() const { return m_currentFps; }
-@@ -254,6 +267,7 @@
+@@ -254,6 +267,10 @@
      void setShaderSource(const QUrl &source);
      void setShaderCode(const QString &code);
      void setRunning(bool running);
 +    void setRainLockScreenHost(bool lockScreenHost);
++    void setRainWindowCount(int count);
++    void setRainMinimumIllumination(qreal value);
++    void setRainIlluminationSeconds(qreal value);
      void setSpeed(qreal speed);
      void setTargetFps(int fps);
      void setResolutionScale(qreal scale);
-@@ -325,6 +339,8 @@
+@@ -325,6 +339,11 @@
      void shaderSourceChanged();
      void shaderCodeChanged();
      void runningChanged();
 +    void rainActiveChanged();
 +    void rainLockScreenHostChanged();
++    void rainWindowCountChanged();
++    void rainMinimumIlluminationChanged();
++    void rainIlluminationSecondsChanged();
      void speedChanged();
      void targetFpsChanged();
      void currentFpsChanged();
-@@ -404,6 +420,15 @@
+@@ -404,6 +420,20 @@
      void handleWindowVisibilityChanged();
  
  private:
@@ -69,6 +89,11 @@
 +    void setRainActive(bool active);
 +    bool m_rainActive = false;
 +    bool m_rainLockScreenHost = false;
++    double advanceRainIllumination();
++    int m_rainWindowCount = 0;
++    arasaka::rain::WindowIllumination m_rainIllumination;
++    std::unique_ptr<arasaka::rain::WindowCountModel> m_rainWindowModel;
++    std::chrono::steady_clock::time_point m_rainIlluminationTime = std::chrono::steady_clock::now();
 +    std::unique_ptr<arasaka::rain::RainInput> m_rainInput;
 +    std::weak_ptr<ShaderRendererLifetime> m_rendererLifetime;
 +    quint64 m_selectionRevision = 0;
@@ -93,7 +118,7 @@
      void ensureBufferFBOs(int bufferIndex);
      void renderBuffer(int bufferIndex);
      void renderMainPass();
-@@ -551,10 +578,22 @@
+@@ -551,10 +578,23 @@
  
      bool m_initialized = false;
      bool m_needsRecompile = false;
@@ -102,6 +127,7 @@
 +    quint64 m_attemptedSelectionRevision = std::numeric_limits<quint64>::max();
 +    bool m_mainSelectionFailed = false;
 +    QSizeF m_rainLogicalSize;
++    float m_rainIllumination = .15f;
 +    std::unique_ptr<arasaka::rain::DropletSimulation> m_rainSimulation;
 +    std::unique_ptr<arasaka::rain::RainFieldRenderer> m_rainField;
 +    arasaka::rain::PointerSnapshot m_rainPointer;
@@ -239,16 +265,52 @@
              Q_EMIT commonCodeChanged();
              Q_EMIT shaderRecompiled();
              changed = true;
-@@ -1076,12 +1095,41 @@
+@@ -1076,12 +1095,77 @@
  // Renderer Implementation
  // ============================================================================
  
 +void ShaderEngine::setRainLockScreenHost(bool lockScreenHost)
 +{
 +    if (m_rainLockScreenHost == lockScreenHost) return;
++    advanceRainIllumination();
 +    m_rainLockScreenHost = lockScreenHost;
++    m_rainIllumination.setWindowCount(lockScreenHost ? 0 : m_rainWindowCount);
 +    if (m_rainInput) m_rainInput->setLockScreenHost(lockScreenHost);
 +    Q_EMIT rainLockScreenHostChanged();
++}
++
++double ShaderEngine::advanceRainIllumination()
++{
++    const auto now = std::chrono::steady_clock::now();
++    const double value = m_rainIllumination.advance(std::chrono::duration<double>(now - m_rainIlluminationTime).count());
++    m_rainIlluminationTime = now;
++    return value;
++}
++
++void ShaderEngine::setRainWindowCount(int count)
++{
++    count = std::max(0, count);
++    if (m_rainWindowCount == count) return;
++    advanceRainIllumination(); // Account for the old target even if no frames were rendered.
++    m_rainWindowCount = count;
++    m_rainIllumination.setWindowCount(m_rainLockScreenHost ? 0 : count);
++    Q_EMIT rainWindowCountChanged();
++}
++
++void ShaderEngine::setRainMinimumIllumination(qreal value)
++{
++    if (!std::isfinite(value) || value == rainMinimumIllumination()) return;
++    advanceRainIllumination();
++    m_rainIllumination.setMinimum(value);
++    Q_EMIT rainMinimumIlluminationChanged();
++}
++
++void ShaderEngine::setRainIlluminationSeconds(qreal value)
++{
++    if (!std::isfinite(value) || value == rainIlluminationSeconds()) return;
++    advanceRainIllumination();
++    m_rainIllumination.setSeconds(value);
++    Q_EMIT rainIlluminationSecondsChanged();
 +}
 +
 +void ShaderEngine::setRainActive(bool active)
@@ -453,7 +515,7 @@
      }
  }
  
-@@ -1700,6 +1801,12 @@
+@@ -1700,6 +1801,13 @@
      for (int i = 0; i < 4; i++) {
          bindChannelInput(i, m_imageChannelMapping[i], -1);  // -1 = no current buffer (image pass)
      }
@@ -461,6 +523,7 @@
 +        f->glActiveTexture(GL_TEXTURE4);
 +        f->glBindTexture(GL_TEXTURE_2D, m_rainField->texture());
 +        m_shaderProgram->setUniformValue("iRainField", 4);
++        m_shaderProgram->setUniformValue("iRainIllumination", m_rainIllumination);
 +        m_shaderProgram->setUniformValue("iRainSize", QVector2D(m_rainField->logicalSize().width(), m_rainField->logicalSize().height()));
 +    }
      
@@ -501,7 +564,7 @@
  }
  
  void ShaderEngineRenderer::ensureLowResFBO()
-@@ -1880,11 +2008,53 @@
+@@ -1880,11 +2008,54 @@
  {
      auto *engine = static_cast<ShaderEngine*>(item);
      m_engineForCallbacks = engine;
@@ -511,6 +574,7 @@
 -    // resumes don't cause shader time to leap forward (legacy #43, #106).
 +    engine->m_rendererLifetime = m_lifetime;
 +    m_selectionRevision = engine->m_selectionRevision;
++    m_rainIllumination = engine->advanceRainIllumination();
 +    // Use the same admitted frame delta for pointer timestamps and the fixed-step consumer.
      engine->accumulateFrame();
 +    m_iTimeDelta = engine->running() ? engine->lastTimeDelta() : 0;
@@ -797,26 +861,47 @@
  }
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
-@@ -13,6 +13,9 @@
+@@ -1,6 +1,9 @@
+ # SPDX-License-Identifier: GPL-3.0-or-later
+ # SPDX-FileCopyrightText: 2026 @y4my4my4m <y4my4m@protonmail.com>
+
++find_package(LibTaskManager REQUIRED)
++find_package(KF6WindowSystem REQUIRED)
++
+ # Define package output directory - this is where kpackagetool6 will install from
+ set(PACKAGE_DIR "${CMAKE_SOURCE_DIR}/package")
+ set(PACKAGE_UI_DIR "${PACKAGE_DIR}/contents/ui")
+@@ -13,6 +16,10 @@
      core/shadercompiler.cpp
      core/uniformmanager.cpp
      core/performancemonitor.cpp
 +    rain/dropletsimulation.cpp
 +    rain/rainfieldrenderer.cpp
 +    rain/raininput.cpp
++    rain/windowcountmodel.cpp
      
      # Input
      input/cursortracker.cpp
-@@ -42,6 +45,9 @@
+@@ -42,6 +49,10 @@
      core/shadercompiler.h
      core/uniformmanager.h
      core/performancemonitor.h
 +    rain/dropletsimulation.h
 +    rain/rainfieldrenderer.h
 +    rain/raininput.h
++    rain/windowcountmodel.h
      
      # Input
      input/cursortracker.h
+@@ -104,6 +115,8 @@
+     KF6::I18n
+     KF6::Package
++    PW::LibTaskManager
++    KF6::WindowSystem
+ )
+
+ # Link optional dependencies
+ if(PIPEWIRE_FOUND)
 --- a/package/contents/ui/ShaderSystem.qml
 +++ b/package/contents/ui/ShaderSystem.qml
 @@ -15,17 +15,24 @@
@@ -850,7 +935,7 @@
      readonly property bool _allowAudio:   !restrictedMode && (wallpaperConfig ? (wallpaperConfig.audioEnabled || false) : false)
      readonly property bool _allowWindows: !restrictedMode && (wallpaperConfig ? (wallpaperConfig.windowsEnabled || false) : false)
      readonly property bool _allowExperimentalDesktop: !restrictedMode && (wallpaperConfig ? (wallpaperConfig.experimentalDesktopUniform || false) : false)
-@@ -33,6 +40,17 @@
+@@ -33,11 +40,44 @@
      readonly property bool _allowExperimentalScreens:  !restrictedMode && (wallpaperConfig ? (wallpaperConfig.experimentalScreenUniforms || false) : false)
      readonly property bool _allowWatchSource: !restrictedMode && (wallpaperConfig ? (wallpaperConfig.watchSourceFile || false) : false)
  
@@ -865,9 +950,36 @@
 +        when: target !== null
 +    }
 +
++    Binding {
++        target: typeof shaderEngine.rainWindowCount !== "undefined" ? shaderEngine : null
++        property: "rainWindowCount"
++        value: shaderSystem._desktopInputHost ? windowModel.visibleWindowCount : 0
++        when: target !== null
++    }
++    Binding {
++        target: typeof shaderEngine.rainMinimumIllumination !== "undefined" ? shaderEngine : null
++        property: "rainMinimumIllumination"
++        value: wallpaperConfig ? (wallpaperConfig.rainMinimumIllumination ?? 0.15) : 0.15
++        when: target !== null
++    }
++    Binding {
++        target: typeof shaderEngine.rainIlluminationSeconds !== "undefined" ? shaderEngine : null
++        property: "rainIlluminationSeconds"
++        value: wallpaperConfig ? (wallpaperConfig.rainIlluminationSeconds ?? 30) : 30
++        when: target !== null
++    }
++
      // Window model for pause detection
      WindowModel {
          id: windowModel
+         config: shaderSystem.wallpaperConfig
++        illuminationModel: shaderSystem._desktopInputHost
++            && typeof shaderEngine.rainWindowModel !== "undefined"
++            ? shaderEngine.rainWindowModel : null
+         screenGeometry: Qt.rect(Screen.virtualX, Screen.virtualY,
+                                 Screen.width, Screen.height)
+     }
+
 @@ -47,7 +65,7 @@
      // with different heights would put the impulse off-cursor).
      CursorTracker {
@@ -1020,3 +1132,77 @@
          when: pluginLoader.item
      }
  }
+--- a/package/contents/ui/WindowModel.qml
++++ b/package/contents/ui/WindowModel.qml
+@@ -33,6 +33,8 @@
+     property bool maximizedExists: false
+     property bool visibleExists: false
+     property bool activeExists: false
++    property int visibleWindowCount: 0
++    property var illuminationModel: null
+     property var abstractTasksModel: TaskManager.AbstractTasksModel
+     property var appId: abstractTasksModel.AppId
+     property var isWindow: abstractTasksModel.IsWindow
+@@ -113,7 +115,43 @@
+         }
+     }
+
++    // The native window source includes skip-taskbar apps, excludes shell
++    // surfaces, and never bypasses workspace filters for attention requests.
++    Binding {
++        target: wModel.illuminationModel
++        property: "screenGeometry"
++        value: wModel.screenGeometry || Qt.rect(0, 0, 0, 0)
++        when: target !== null
++    }
++    Binding {
++        target: wModel.illuminationModel
++        property: "virtualDesktop"
++        value: virtualDesktopInfo.currentDesktop
++        when: target !== null
++    }
++    Binding {
++        target: wModel.illuminationModel
++        property: "activity"
++        value: activityInfo.currentActivity
++        when: target !== null
++    }
++    Connections {
++        target: wModel.illuminationModel
++        function onDataChanged() { Qt.callLater(updateIlluminationCount) }
++        function onCountChanged() { Qt.callLater(updateIlluminationCount) }
++    }
++
++    function updateIlluminationCount() {
++        visibleWindowCount = illuminationModel && !KWindowSystem.showingDesktop
++            && screenGeometry && screenGeometry.width > 0 && screenGeometry.height > 0
++            ? illuminationModel.count : 0;
++    }
++    Component.onCompleted: updateIlluminationCount()
++    onScreenGeometryChanged: Qt.callLater(updateIlluminationCount)
++    onIlluminationModelChanged: Qt.callLater(updateIlluminationCount)
++
+     function updateWindowsInfo() {
++        updateIlluminationCount();
+         let activeCount = 0;
+         let visibleCount = 0;
+         let maximizedCount = 0;
+--- a/package/contents/config/main.xml
++++ b/package/contents/config/main.xml
+@@ -53,6 +53,16 @@
+       <default></default>
+     </entry>
+
++    <!-- Shared native-rain illumination, independent of playback speed. -->
++    <entry name="rainMinimumIllumination" type="Double">
++      <label>Empty-screen illumination relative to the original wallpaper</label>
++      <default>0.15</default>
++    </entry>
++    <entry name="rainIlluminationSeconds" type="Double">
++      <label>Real seconds to settle 95 percent toward the window-count illumination</label>
++      <default>30</default>
++    </entry>
++
+     <!-- Mouse Settings -->
+     <entry name="mouseEnabled" type="Bool">
+       <label>Enable mouse interaction with shader</label>

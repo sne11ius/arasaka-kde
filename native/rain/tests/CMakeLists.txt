@@ -22,3 +22,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(coalescence_test PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 add_test(NAME coalescence COMMAND coalescence_test)
+
+add_executable(windowillumination_test windowillumination_test.cpp)
+target_include_directories(windowillumination_test PRIVATE ..)
+target_compile_features(windowillumination_test PRIVATE cxx_std_20)
+add_test(NAME windowillumination COMMAND windowillumination_test)

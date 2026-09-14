@@ -65,8 +65,9 @@ the manifest does not mean every component is installed or active by default.
 - CMake **3.22+**, a **C++20** compiler, `pkg-config`, and KDE Extra CMake Modules.
 - Qt **6.6+** development packages for Core, Gui, Quick, Qml, OpenGL, Network,
   Multimedia, and DBus.
-- Frameworks 6 development packages for Config, I18n, and Package.
+- Frameworks 6 development packages for Config, I18n, Package, and WindowSystem.
 - Plasma and PlasmaQuick development packages.
+- LibTaskManager development files (usually supplied by `plasma-workspace-dev`).
 - `rsvg-convert` for rendering the original SVG artwork.
 
 The build follows upstream CMake checks for optional dependencies. By default it

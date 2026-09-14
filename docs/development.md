@@ -105,6 +105,7 @@ patch --batch --forward --fuzz=0 -p1 -d "$UPSTREAM" \
   -i "$PWD/assets/wallpapers/shaders/interactive-rain-host.patch"
 mkdir -p "$UPSTREAM/src/rain"
 cp native/rain/{dropletsimulation,rainfieldrenderer,raininput}.{h,cpp} "$UPSTREAM/src/rain/"
+cp native/rain/windowillumination.h native/rain/windowcountmodel.{h,cpp} "$UPSTREAM/src/rain/"
 cmake -S "$UPSTREAM" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release
 cmake --build "$BUILD" --parallel 2
 cp "$UPSTREAM/package/contents/ui/Shaders/Heartfelt.frag" "$UPSTREAM/Heartfelt_No_Heart.frag"
@@ -116,6 +117,8 @@ patch --batch --forward --fuzz=0 -p1 -d "$UPSTREAM" \
 cmake -S tests/native_rain -B build/rain-host-tests -DRAIN_UPSTREAM_SOURCE="$UPSTREAM"
 cmake --build build/rain-host-tests --parallel 2
 ctest --test-dir build/rain-host-tests --output-on-failure
+python3 tests/window_illumination_smoke.py build/rain-host-tests/window_count_test
+python3 tests/window_illumination_smoke.py build/rain-host-tests/window_count_test --per-output-desktops
 python3 tests/shader_smoke.py --rain-check --package "$UPSTREAM/package" \
   --shader "$UPSTREAM/Interactive_Rain.frag" --texture assets/wallpapers/mikoshi-16x9.svg \
   --screenshot /tmp/interactive-rain.png
@@ -126,6 +129,13 @@ live installation. `--rain-check` covers rendering, pause/resume, selection fail
 and input roles. Optional `--previous-native PATH` checks new host QML against a
 copied previous module. `--blur-check` instead examines filtering and lightning;
 it cannot be combined with `--rain-check`.
+
+The illumination smoke test starts a private two-output KWin/Wayland session and
+checks actual window counts, including skip-taskbar applications, attention on
+other desktops/activities, Show Desktop, minimizing and closing windows. It also
+checks QML count recovery after an initially unavailable window-type lookup and,
+on Plasma 6.7, independent virtual desktops on each output. The standalone
+native tests cover the brightness curve and 30-second adaptation timing.
 
 For gallery round-trips, supply a staged/installed package and its external shaders:
 

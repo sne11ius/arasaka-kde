@@ -24,15 +24,18 @@ set_tests_properties(login_pointer PROPERTIES TIMEOUT 20
 
 set(RAIN_UPSTREAM_SOURCE "" CACHE PATH "Patched pinned upstream source for real host lifecycle tests")
 if(RAIN_UPSTREAM_SOURCE)
+    find_package(LibTaskManager REQUIRED)
+    find_package(KF6WindowSystem REQUIRED)
     add_executable(rain_host_test rain_host_test.cpp
         ${RAIN_UPSTREAM_SOURCE}/src/core/shaderengine.cpp
         ${RAIN_UPSTREAM_SOURCE}/src/data/shaderlibrary.cpp
         ${RAIN_UPSTREAM_SOURCE}/src/data/shadermetadata.cpp
         ${RAIN_UPSTREAM_SOURCE}/src/rain/rainfieldrenderer.cpp
         ${RAIN_UPSTREAM_SOURCE}/src/rain/raininput.cpp
+        ${RAIN_UPSTREAM_SOURCE}/src/rain/windowcountmodel.cpp
         ${RAIN_UPSTREAM_SOURCE}/src/rain/dropletsimulation.cpp)
     target_include_directories(rain_host_test PRIVATE ${RAIN_UPSTREAM_SOURCE}/src)
-    target_link_libraries(rain_host_test PRIVATE Qt6::Quick Qt6::OpenGL Qt6::Test Qt6::DBus)
+    target_link_libraries(rain_host_test PRIVATE Qt6::Quick Qt6::OpenGL Qt6::Test Qt6::DBus PW::LibTaskManager KF6::WindowSystem)
     target_compile_options(rain_host_test PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME rain_host COMMAND rain_host_test)
 
@@ -44,4 +47,9 @@ if(RAIN_UPSTREAM_SOURCE)
     target_compile_definitions(rain_wallpaper_test PRIVATE RAIN_PACKAGE="${RAIN_UPSTREAM_SOURCE}/package")
     target_compile_options(rain_wallpaper_test PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME rain_wallpaper COMMAND rain_wallpaper_test)
+
+    add_executable(window_count_test window_count_test.cpp ../../native/rain/windowcountmodel.cpp)
+    target_link_libraries(window_count_test PRIVATE Qt6::Quick Qt6::Test Qt6::DBus PW::LibTaskManager KF6::WindowSystem)
+    target_compile_definitions(window_count_test PRIVATE RAIN_PACKAGE="${RAIN_UPSTREAM_SOURCE}/package")
+    # Requires a private two-output compositor; invoked by window_illumination_smoke.py.
 endif()

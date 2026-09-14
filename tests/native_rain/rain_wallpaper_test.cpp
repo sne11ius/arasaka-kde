@@ -103,6 +103,13 @@ private Q_SLOTS:
         wallpaper.completeInitialization({{QStringLiteral("configuration"), QVariant::fromValue(&config)},
                                           {QStringLiteral("width"), 320}, {QStringLiteral("height"), 240}});
         QVERIFY(system && engine && tracker && area);
+        QObject *windowModel = nullptr;
+        for (auto *object : system->children()) {
+            if (object->metaObject()->indexOfProperty("maximizedExists") >= 0) windowModel = object;
+        }
+        QVERIFY(windowModel);
+        QVERIFY2(windowModel->property("visibleWindowCount").isValid(),
+                 "Window model must expose its per-display visible window count");
         QCOMPARE(engine->property("rainLockScreenHost").isValid(), !previous);
         QVERIFY(!item->window());
         QCOMPARE(engine->property("rainActive").toBool(), false);
@@ -174,6 +181,16 @@ private Q_SLOTS:
         QCOMPARE(engine->property("mouseEnabled").toBool(), true);
         QCOMPARE(tracker->property("enabled").toBool(), !rain);
         QCOMPARE(area->property("enabled").toBool(), !rain);
+        if (!previous) {
+            QVERIFY(windowModel->setProperty("visibleWindowCount", 4));
+            QCOMPARE(engine->property("rainWindowCount").toInt(), 4);
+            item->setParentItem(lockView.rootObject());
+            QCOMPARE(engine->property("rainWindowCount").toInt(), 0);
+            item->setParentItem(loginView.rootObject());
+            QCOMPARE(engine->property("rainWindowCount").toInt(), 0);
+            item->setParentItem(desktopView.rootObject());
+            QCOMPARE(engine->property("rainWindowCount").toInt(), 4);
+        }
 
         // Plasma can attach/move a whole containment after its wallpaper is loaded.
         // The wallpaper's own parent stays the same while its ancestors change windows.

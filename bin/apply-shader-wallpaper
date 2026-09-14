@@ -101,7 +101,8 @@ def main():
     host_patch = repo / "assets/wallpapers/shaders/interactive-rain-host.patch"
     rain_sources = [repo / "native/rain" / name for name in (
         "dropletsimulation.h", "dropletsimulation.cpp", "rainfieldrenderer.h",
-        "rainfieldrenderer.cpp", "raininput.h", "raininput.cpp")]
+        "rainfieldrenderer.cpp", "raininput.h", "raininput.cpp", "windowillumination.h",
+        "windowcountmodel.h", "windowcountmodel.cpp")]
     inputs = [patch, dusti_patch, rain_patch, host_patch, *rain_sources]
     if args.stage_only:
         inputs += [repo / "bin/fetch-components", repo / "lib/common.sh",

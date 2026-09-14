@@ -9,6 +9,8 @@
     "pauseMode": 0,
     "checkActiveScreen": true,
     "excludeWindows": [],
+    "rainMinimumIllumination": 0.15,
+    "rainIlluminationSeconds": 30,
     "mouseEnabled": true,
     "audioEnabled": false,
     "windowsEnabled": false,

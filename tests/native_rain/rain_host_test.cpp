@@ -491,6 +491,33 @@ private Q_SLOTS:
         QVERIFY(engine.m_rainInput->invalidationSequence() > changed);
     }
 
+    void windowIlluminationUsesRealTimeWhileRainIsPaused() {
+        ShaderEngine engine;
+        engine.setSize({320, 240});
+        engine.setRunning(false);
+        engine.setSpeed(0);
+        engine.setShaderCode(QStringLiteral(
+            "// @arasaka-effect rain-v1\n"
+            "uniform float iRainIllumination;\n"
+            "void mainImage(out vec4 c, in vec2 p) { c = vec4(vec3(iRainIllumination), 1.); }"));
+        ShaderEngineRenderer renderer;
+        renderer.synchronize(&engine);
+        QVERIFY2(std::abs(imagePixel(renderer).x() - .15f) < .001f,
+                 "An empty screen must render the dark shared illumination baseline");
+        QVERIFY(engine.setProperty("rainWindowCount", 4));
+        // Shorten only the configurable adaptation period, not rain playback time.
+        QVERIFY(engine.setProperty("rainIlluminationSeconds", .15));
+        QTest::qWait(160);
+        renderer.synchronize(&engine);
+        const auto bright = imagePixel(renderer).x();
+        QVERIFY(bright > .74f && bright < .79f);
+        QCOMPARE(engine.iTime(), 0.0);
+        engine.setRainLockScreenHost(true);
+        QTest::qWait(160);
+        renderer.synchronize(&engine);
+        QVERIFY(imagePixel(renderer).x() < .19f);
+    }
+
     void rejectedSelectionKeepsLiveInputs() {
         QFETCH(bool, missingFile);
         ShaderEngine engine;
