@@ -163,8 +163,11 @@ python3 tests/window_policy_smoke.py /tmp/opencode/policy-package
 
 The suite starts a private virtual KWin session, disposable application windows,
 fixed-size dialogs, a credential-free pinentry confirmation, and a disposable
-Konsole. It checks actual tile membership, decorations, drag/drop, output
-destruction/recreation, exception recovery, and the PID-scoped floating exception.
+Konsole, plus Spectacle's editor and region-selection overlays. It checks actual
+tile membership, decorations, drag/drop, output destruction/recreation, exception
+recovery, the PID-scoped floating exception, and screenshot overlays on both
+outputs without moving the underlying windows. Spectacle must be installed;
+the virtual compositor uses Mesa software OpenGL for its screenshot API.
 
 ## Public-docs checks
 

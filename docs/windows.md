@@ -29,6 +29,10 @@ are disabled for the managed policy.
 
 - **GeForce NOW:** its `GeForceNOW` application window may enter fullscreen and
   rejoins the layout when fullscreen ends.
+- **Spectacle region selection:** its `org.kde.spectacle` surfaces tagged
+  `region-editor` remain fullscreen overlays on each display. Opening or closing
+  region selection leaves the underlying layout in place. Spectacle's ordinary
+  editor and dialogs still tile.
 - **Stream Deck Quake Konsole:** the native helper validates the ownership and
   running Konsole executable behind `/tmp/konsole-quake.pid`, then selects one
   non-transient top-level window from that process. This is the sole floating

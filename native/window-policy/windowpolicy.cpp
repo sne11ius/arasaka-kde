@@ -27,6 +27,15 @@ bool fullscreenException(KWin::Window *w)
     return applicationWindow(w) && w->isFullScreen()
         && w->resourceClass() == QStringLiteral("GeForceNOW");
 }
+
+bool screenshotOverlay(KWin::Window *w)
+{
+    // Spectacle uses normal toplevels for its per-screen capture surfaces.
+    // Their stable tag identifies them even before fullscreen is committed;
+    // title/fullscreen matching would also exempt the ordinary editor.
+    return applicationWindow(w) && w->resourceClass() == QStringLiteral("org.kde.spectacle")
+        && w->tag() == QStringLiteral("region-editor");
+}
 }
 
 WindowPolicy::WindowPolicy(QObject *parent) : QObject(parent)
@@ -70,6 +79,7 @@ QString WindowPolicy::report() const
             {"minimized", w->isMinimized()}, {"maximized", int(w->maximizeMode())},
             {"fullscreen", w->isFullScreen()}, {"moving", w->isInteractiveMove()},
             {"fullscreenException", fullscreenException(w)},
+            {"screenshotOverlay", screenshotOverlay(w)},
             {"resizing", w->isInteractiveResize()}, {"noBorder", w->noBorder()},
             {"keepAbove", w->keepAbove()}
         });
@@ -132,7 +142,7 @@ bool WindowPolicy::isQuake(QObject *window) const
 bool WindowPolicy::tiles(QObject *window) const
 {
     auto *w = qobject_cast<KWin::Window *>(window);
-    return applicationWindow(w) && !isQuake(w) && !fullscreenException(w);
+    return applicationWindow(w) && !isQuake(w) && !fullscreenException(w) && !screenshotOverlay(w);
 }
 
 void WindowPolicy::watch(KWin::Window *w)

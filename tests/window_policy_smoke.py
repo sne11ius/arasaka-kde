@@ -59,8 +59,8 @@ def child(run):
         return evaluate("""
             return workspace.windowList().filter(w => w.normalWindow || w.dialog).map(w => ({
                 id: String(w.internalId), app: String(w.resourceClass), caption: w.caption,
-                pid: w.pid, tile: w.tile !== null, minimized: w.minimized,
-                output: w.output.name,
+                pid: w.pid, tile: w.tile !== null, minimized: w.minimized, tag: w.tag,
+                output: w.output.name, outputFrame: w.output.geometry,
                 above: w.keepAbove, noBorder: w.noBorder, move: w.move, resize: w.resize,
                 maximized: w.maximizeMode, fullScreen: w.fullScreen,
                 tileFrame: w.tile ? w.tile.absoluteGeometry : null,
@@ -234,6 +234,66 @@ def child(run):
             wait_for(lambda: window("Policy CSD")["tile"], "all-activities window remains tiled", 3)
         check("windows on all activities are enrolled", all_activities)
 
+        def screenshot_overlay():
+            # Exercise the real per-output region-editor surfaces. A normal
+            # Spectacle window must still tile; matching only its app ID would
+            # hide the original bug behind an overly broad exemption.
+            editor = subprocess.Popen(["spectacle", "--new-instance", "--launchonly"],
+                                      env=env, stdout=open(run / "spectacle-editor.log", "w"),
+                                      stderr=subprocess.STDOUT)
+            clients.append(editor)
+            try:
+                wait_for(lambda: any(w["pid"] == editor.pid and not w["tag"] and w["tile"] for w in windows()),
+                         "ordinary Spectacle editor tiles")
+            finally:
+                editor.terminate()
+                editor.wait(timeout=5)
+            wait_for(lambda: not any(w["pid"] == editor.pid for w in windows()), "editor closes")
+            time.sleep(0.3)
+            baseline = {w["id"]: w["frame"] for w in windows()}
+            monitor = run / "screenshot-layout-monitor.js"
+            monitor.write_text('''
+                for (const w of workspace.windowList().filter(w => w.normalWindow || w.dialog)) {
+                    w.frameGeometryChanged.connect(() => print("SCREENSHOT_LAYOUT_CHANGED:geometry"));
+                    w.tileChanged.connect(() => print("SCREENSHOT_LAYOUT_CHANGED:tile"));
+                }
+            ''')
+            ident = dbus("/Scripting", "org.kde.kwin.Scripting.loadScript", str(monitor), "screenshot-layout-monitor")
+            dbus(f"/Scripting/Script{ident}", "org.kde.kwin.Script.run")
+            try:
+                for attempt in range(2):
+                    capture = subprocess.Popen(["spectacle", "--new-instance", "--region"], env=env,
+                                               stdout=open(run / f"spectacle-region-{attempt}.log", "w"),
+                                               stderr=subprocess.STDOUT)
+                    clients.append(capture)
+                    try:
+                        def overlays():
+                            return [w for w in windows() if w["pid"] == capture.pid and w["tag"] == "region-editor"]
+                        wait_for(lambda: len(overlays()) == 2, "Spectacle overlay on each output")
+                        time.sleep(0.3)
+                        current = overlays()
+                        assert len({w["output"] for w in current}) == 2, current
+                        assert all(not w["tile"] and w["fullScreen"] and w["client"] == w["frame"]
+                                   and w["frame"] == w["outputFrame"] for w in current), current
+                        assert {w["id"]: w["frame"] for w in windows() if w["id"] in baseline} == baseline
+                        if plugin == "arasaka-polonium":
+                            # Applying/reloading while capturing must also accept
+                            # the overlay exception in the installer's live check.
+                            subprocess.run([sys.executable, "-c",
+                                f"import runpy; runpy.run_path({str(ROOT / 'bin/apply-window-policy')!r})"
+                                f"['wait_for_policy']({manifest['version']!r}, {manifest['nativeRevision']!r})"],
+                                check=True, env=env)
+                    finally:
+                        capture.terminate()
+                        capture.wait(timeout=5)
+                    wait_for(lambda: not overlays(), "region overlays close")
+                    time.sleep(0.3)
+                    assert {w["id"]: w["frame"] for w in windows()} == baseline
+                assert "SCREENSHOT_LAYOUT_CHANGED:" not in (run / "kwin.log").read_text()
+            finally:
+                dbus("/Scripting", "org.kde.kwin.Scripting.unloadScript", "screenshot-layout-monitor")
+        check("Spectacle region overlays preserve fullscreen coverage and the underlying layout", screenshot_overlay)
+
         def authentication_prompt():
             prompt = subprocess.Popen(["pinentry-qt"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                       stderr=open(run / "pinentry.log", "w"), env=env, text=True)
@@ -369,8 +429,12 @@ def main():
                XDG_CONFIG_HOME=str(run / "config"), XDG_CONFIG_DIRS=str(run / "config-dirs"),
                XDG_DATA_HOME=str(run / "data"), XDG_DATA_DIRS="/usr/share",
                XDG_STATE_HOME=str(run / "state"), XDG_CACHE_HOME=str(run / "cache"),
-               XDG_RUNTIME_DIR=str(run / "runtime"), KWIN_COMPOSE="Q", QT_QUICK_BACKEND="software",
+               XDG_RUNTIME_DIR=str(run / "runtime"), KWIN_COMPOSE="O2", QT_QUICK_BACKEND="software",
                LIBGL_ALWAYS_SOFTWARE="1", DBUS_SYSTEM_BUS_ADDRESS="unix:path=/nonexistent-policy-system-bus")
+    # Software OpenGL enables KWin's screenshot path (unavailable with QPainter).
+    # This disposable bus has no desktop launch service to authorize Spectacle.
+    # Permit capture only inside this private virtual compositor.
+    env["KWIN_SCREENSHOT_NO_PERMISSION_CHECKS"] = "1"
     if plugin == "arasaka-polonium":
         subprocess.run([sys.executable, "-c",
             f"import runpy; runpy.run_path({str(ROOT / 'bin/apply-window-policy')!r})['configure']({version!r})"],
