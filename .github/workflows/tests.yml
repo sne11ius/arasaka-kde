@@ -53,14 +53,14 @@ jobs:
             --volume "$PWD:/workspace" arasaka-ci make coverage
       - name: Retain coverage reports, including on fork PRs
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: core-coverage
           path: build/coverage/*.xml
           if-no-files-found: error
       - name: Publish Python helper coverage
         if: github.event_name != 'pull_request' && github.repository == 'sne11ius/arasaka-kde'
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
         with:
           use_oidc: true
           files: build/coverage/python.xml
@@ -69,7 +69,7 @@ jobs:
           fail_ci_if_error: true
       - name: Publish native physics coverage
         if: github.event_name != 'pull_request' && github.repository == 'sne11ius/arasaka-kde'
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
         with:
           use_oidc: true
           files: build/coverage/physics.xml
