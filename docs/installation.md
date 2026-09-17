@@ -54,8 +54,8 @@ plugin availability depend on the exact KDE stack.
   (`krunner_services`) enabled in KDE Search settings.
 - **Klassy**, **Kvantum** with **KvFlatRed**, and Breeze cursors.
 - Fonts: **Inter**, **JetBrains Mono**, and **Rajdhani SemiBold**.
-- Better Blur DX is optional: the deployment falls back to Plasma's Blur when the
-  native effect is unavailable. It is not automatically built by `apply-live`.
+- Plasma's built-in **Blur** effect is enabled at strength **12/15**. Deployment
+  disables Better Blur DX in favor of the effect shipped with the installed KWin.
 
 The component manifest also records retained upstream components. Being listed in
 the manifest does not mean every component is installed or active by default.

@@ -43,6 +43,13 @@ GTK overlay, and adds the Zsh overlay source line when appropriate. Firefox
 integration enables userChrome styles for profiles found through `profiles.ini`.
 Review the relevant command before reapplying application-specific changes.
 
+### Translucent window blur
+
+`bin/apply-live` sets KWin's built-in Blur to **12/15** and disables Better Blur DX.
+This compositor-wide strength softens text and contrast behind translucent windows,
+including the Stream Deck Quake Konsole at its **50% background opacity**. Other
+surfaces that request blur share the same strength.
+
 ## Artwork
 
 Edit the source artwork:

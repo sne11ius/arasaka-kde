@@ -230,31 +230,15 @@ systemctl --user enable --now arasaka-display-reconcile.path
 path_disabled=false
 trap - EXIT
 
-if [[ -f "$HOME/.local/lib/x86_64-linux-gnu/plugins/kwin/effects/plugins/better_blur_dx.so" ]]; then
-  # KWin discovers this user plugin path at login; keep the loaded native effect alive until then.
-  kwriteconfig6 --file kwinrc --group Plugins --key better_blur_dxEnabled --type bool true
-  kwriteconfig6 --file kwinrc --group Plugins --key blurEnabled --type bool false
-  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key BlurStrength 1
-  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key NoiseStrength 7
-  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key Brightness 86
-  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key Saturation 118
-  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key Contrast 112
-  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key ForceContrastParams --type bool true
-  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key CornerRadius 2
-  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key BlurNonMatching --type bool true
-  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key BlurDecorations --type bool true
-  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key BlurMenus --type bool true
-  kwriteconfig6 --file kwinrc --group Effect-better-blur-dx --key BlurDocks --type bool true
-  qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect better_blur_dx >/dev/null || true
-  if [[ $(qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.isEffectLoaded better_blur_dx) == true ]]; then
-    qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.unloadEffect blur >/dev/null || true
-  else
-    kwriteconfig6 --file kwinrc --group Plugins --key better_blur_dxEnabled --type bool false
-    kwriteconfig6 --file kwinrc --group Plugins --key blurEnabled --type bool true
-    qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect blur >/dev/null || true
-  fi
-else
-  kwriteconfig6 --file kwinrc --group Plugins --key better_blur_dxEnabled --type bool false
-  kwriteconfig6 --file kwinrc --group Plugins --key blurEnabled --type bool true
-  qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect blur >/dev/null || true
+# Strong native blur keeps text behind the translucent Quake window from competing
+# with terminal content and stays compatible with the installed KWin version.
+kwriteconfig6 --file kwinrc --group Effect-blur --key BlurStrength 12
+kwriteconfig6 --file kwinrc --group Plugins --key better_blur_dxEnabled --type bool false
+kwriteconfig6 --file kwinrc --group Plugins --key blurEnabled --type bool true
+qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect blur >/dev/null
+if [[ $(qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.isEffectLoaded blur) != true ]]; then
+  printf '%s\n' 'Native KWin Blur failed to load.' >&2
+  exit 1
 fi
+qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.unloadEffect better_blur_dx
+qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.reconfigureEffect blur
