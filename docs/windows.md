@@ -20,15 +20,16 @@ cancelling restores the original display.
 | Super + Shift + H/J/K/L | Rearrange windows |
 | Super + Ctrl + H/J/K/L | Resize shared tile boundaries |
 
-Mouse resizing is cancelled. Maximize, fullscreen, manual untiling, and the old
-floating toggle cannot leave ordinary windows outside the layout. Minimize,
-restore, and close remain available. Alternative engines and per-output settings
-are disabled for the managed policy.
+Mouse resizing is cancelled. Maximize, manual untiling, and the old floating
+toggle cannot leave ordinary windows outside the layout. Fullscreen temporarily
+suspends tiling: the window leaves the tree while fullscreen and rejoins when
+fullscreen ends. Minimize, restore, and close remain available. Alternative
+engines and per-output settings are disabled for the managed policy.
 
 ### Deliberate exceptions
 
-- **GeForce NOW:** its `GeForceNOW` application window may enter fullscreen and
-  rejoins the layout when fullscreen ends.
+- **Fullscreen:** any application window may enter fullscreen. The window is
+  untiled while fullscreen and rejoins the layout when fullscreen ends.
 - **Spectacle region selection:** its `org.kde.spectacle` surfaces tagged
   `region-editor` remain fullscreen overlays on each display. Opening or closing
   region selection leaves the underlying layout in place. Spectacle's ordinary

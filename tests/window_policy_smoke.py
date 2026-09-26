@@ -203,9 +203,12 @@ def child(run):
 
         def fullscreen():
             action("Policy CSD", "w.fullScreen = true")
+            wait_for(lambda: window("Policy CSD")["fullScreen"] and not window("Policy CSD")["tile"],
+                     "fullscreen untiles the window", 3)
+            action("Policy CSD", "w.fullScreen = false")
             wait_for(lambda: not window("Policy CSD")["fullScreen"] and window("Policy CSD")["tile"],
-                     "fullscreen cannot bypass forced tiling", 3)
-        check("fullscreen cannot escape the layout", fullscreen)
+                     "exiting fullscreen retiles", 3)
+        check("fullscreen temporarily suspends tiling", fullscreen)
 
         def detach():
             action("Policy SSD", "w.tile = null")

@@ -24,8 +24,7 @@ bool applicationWindow(KWin::Window *w)
 
 bool fullscreenException(KWin::Window *w)
 {
-    return applicationWindow(w) && w->isFullScreen()
-        && w->resourceClass() == QStringLiteral("GeForceNOW");
+    return applicationWindow(w) && w->isFullScreen();
 }
 
 bool screenshotOverlay(KWin::Window *w)
